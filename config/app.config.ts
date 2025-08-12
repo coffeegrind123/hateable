@@ -2,48 +2,31 @@
 // This file contains all configurable settings for the application
 
 export const appConfig = {
-  // E2B Sandbox Configuration
-  e2b: {
-    // Sandbox timeout in minutes
-    timeoutMinutes: 15,
-    
-    // Convert to milliseconds for E2B API
-    get timeoutMs() {
-      return this.timeoutMinutes * 60 * 1000;
-    },
+  // Local Sandbox Configuration
+  sandbox: {
+    // Base directory for sandboxes (relative to project root)
+    baseDir: 'sandboxes',
     
     // Vite development server port
     vitePort: 5173,
     
     // Time to wait for Vite to be ready (in milliseconds)
-    viteStartupDelay: 7000,
+    viteStartupDelay: 5000,
     
     // Time to wait for CSS rebuild (in milliseconds)
     cssRebuildDelay: 2000,
     
-    // Default sandbox template (if using templates)
-    defaultTemplate: undefined, // or specify a template ID
+    // Sandbox timeout for cleanup (in minutes)
+    timeoutMinutes: 60,
   },
   
   // AI Model Configuration
   ai: {
-    // Default AI model
-    defaultModel: 'moonshotai/kimi-k2-instruct',
-    
-    // Available models
-    availableModels: [
-      'openai/gpt-5',
-      'moonshotai/kimi-k2-instruct',
-      'anthropic/claude-sonnet-4-20250514',
-      'google/gemini-2.5-pro'
-    ],
-    
-    // Model display names
-    modelDisplayNames: {
-      'openai/gpt-5': 'GPT-5',
-      'moonshotai/kimi-k2-instruct': 'Kimi K2 Instruct',
-      'anthropic/claude-sonnet-4-20250514': 'Sonnet 4',
-      'google/gemini-2.5-pro': 'Gemini 2.5 Pro'
+    // Default custom endpoint configuration
+    defaultEndpoint: {
+      url: 'http://localhost:8081/v1',
+      apiKey: '',
+      model: 'gpt-3.5-turbo'
     },
     
     // Temperature settings for non-reasoning models

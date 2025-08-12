@@ -4,32 +4,18 @@ import { promisify } from 'util';
 
 const execAsync = promisify(exec);
 
-declare global {
-  var activeSandbox: any;
-}
-
 export async function POST(request: NextRequest) {
   try {
     const { command } = await request.json();
     
-    if (!command) {
-      return NextResponse.json({ 
-        success: false, 
-        error: 'Command is required' 
-      }, { status: 400 });
-    }
-    
     if (!global.activeSandbox) {
-      return NextResponse.json({ 
-        success: false, 
-        error: 'No active sandbox' 
-      }, { status: 400 });
+      return NextResponse.json({ error: 'No active sandbox' }, { status: 400 });
     }
 
     const sandboxPath = global.activeSandbox.sandboxPath;
     
-    console.log('[run-command] Running command in local sandbox:', command);
-    console.log('[run-command] Working directory:', sandboxPath);
+    console.log('[run-local-command] Running command in local sandbox:', command);
+    console.log('[run-local-command] Working directory:', sandboxPath);
 
     try {
       const { stdout, stderr } = await execAsync(command, { 
@@ -37,36 +23,34 @@ export async function POST(request: NextRequest) {
         timeout: 30000 // 30 second timeout
       });
       
-      console.log('[run-command] Command executed successfully');
-      if (stdout) console.log('[run-command] stdout:', stdout);
-      if (stderr) console.log('[run-command] stderr:', stderr);
+      console.log('[run-local-command] Command executed successfully');
+      if (stdout) console.log('[run-local-command] stdout:', stdout);
+      if (stderr) console.log('[run-local-command] stderr:', stderr);
 
       return NextResponse.json({
         success: true,
         stdout: stdout || '',
         stderr: stderr || '',
-        output: stdout || '',
         message: 'Command executed successfully'
       });
 
     } catch (execError: any) {
-      console.error('[run-command] Command execution error:', execError);
+      console.error('[run-local-command] Command execution error:', execError);
       
       return NextResponse.json({
         success: false,
         stdout: execError.stdout || '',
         stderr: execError.stderr || '',
-        output: execError.stdout || '',
         error: execError.message,
         exitCode: execError.code
       });
     }
 
   } catch (error) {
-    console.error('[run-command] Error:', error);
-    return NextResponse.json({ 
-      success: false, 
-      error: (error as Error).message 
-    }, { status: 500 });
+    console.error('[run-local-command] Error:', error);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Failed to run command' },
+      { status: 500 }
+    );
   }
 }

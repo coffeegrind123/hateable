@@ -1,8 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createGroq } from '@ai-sdk/groq';
-import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAI } from '@ai-sdk/openai';
-import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { streamText } from 'ai';
 import type { SandboxState } from '@/types/sandbox';
 import { selectFilesForEdit, getFileContents, formatFilesForAI } from '@/lib/context-selector';
@@ -11,22 +8,7 @@ import { FileManifest } from '@/types/file-manifest';
 import type { ConversationState, ConversationMessage, ConversationEdit } from '@/types/conversation';
 import { appConfig } from '@/config/app.config';
 
-const groq = createGroq({
-  apiKey: process.env.GROQ_API_KEY,
-});
-
-const anthropic = createAnthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-  baseURL: process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com/v1',
-});
-
-const googleGenerativeAI = createGoogleGenerativeAI({
-  apiKey: process.env.GEMINI_API_KEY,
-});
-
-const openai = createOpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+// Custom OpenAI-compatible client will be created per request
 
 // Helper function to analyze user preferences from conversation history
 function analyzeUserPreferences(messages: ConversationMessage[]): {
@@ -74,7 +56,7 @@ declare global {
 
 export async function POST(request: NextRequest) {
   try {
-    const { prompt, model = 'openai/gpt-oss-20b', context, isEdit = false } = await request.json();
+    const { prompt, customEndpoint, context, isEdit = false } = await request.json();
     
     console.log('[generate-ai-code-stream] Received request:');
     console.log('[generate-ai-code-stream] - prompt:', prompt);
@@ -178,7 +160,7 @@ export async function POST(request: NextRequest) {
               const intentResponse = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/analyze-edit-intent`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ prompt, manifest, model })
+                body: JSON.stringify({ prompt, manifest, customEndpoint })
               });
               
               if (intentResponse.ok) {
@@ -322,7 +304,7 @@ User request: "${prompt}"`;
                       const intentResponse = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/analyze-edit-intent`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ prompt, manifest, model })
+                        body: JSON.stringify({ prompt, manifest, customEndpoint })
                       });
                       
                       if (intentResponse.ok) {
@@ -971,7 +953,7 @@ CRITICAL: When files are provided in the context:
                         const intentResponse = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/analyze-edit-intent`, {
                           method: 'POST',
                           headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ prompt, manifest: filesData.manifest, model })
+                          body: JSON.stringify({ prompt, manifest: filesData.manifest, customEndpoint })
                         });
                         
                         if (intentResponse.ok) {
@@ -1151,18 +1133,15 @@ CRITICAL: When files are provided in the context:
         // Track packages that need to be installed
         const packagesToInstall: string[] = [];
         
-        // Determine which provider to use based on model
-        const isAnthropic = model.startsWith('anthropic/');
-        const isGoogle = model.startsWith('google/');
-        const isOpenAI = model.startsWith('openai/gpt-5');
-        const modelProvider = isAnthropic ? anthropic : (isOpenAI ? openai : (isGoogle ? googleGenerativeAI : groq));
-        const actualModel = isAnthropic ? model.replace('anthropic/', '') : 
-                           (model === 'openai/gpt-5') ? 'gpt-5' :
-                           (isGoogle ? model.replace('google/', '') : model);
+        // Create OpenAI-compatible client with custom endpoint
+        const customOpenAI = createOpenAI({
+          apiKey: customEndpoint.apiKey,
+          baseURL: customEndpoint.url,
+        });
 
-        // Make streaming API call with appropriate provider
+        // Make streaming API call with custom provider
         const streamOptions: any = {
-          model: modelProvider(actualModel),
+          model: customOpenAI(customEndpoint.model),
           messages: [
             { 
               role: 'system', 
@@ -1229,19 +1208,8 @@ It's better to have 3 complete files than 10 incomplete files.`
           // We use XML tags for package detection instead
         };
         
-        // Add temperature for non-reasoning models
-        if (!model.startsWith('openai/gpt-5')) {
-          streamOptions.temperature = 0.7;
-        }
-        
-        // Add reasoning effort for GPT-5 models
-        if (isOpenAI) {
-          streamOptions.experimental_providerMetadata = {
-            openai: {
-              reasoningEffort: 'high'
-            }
-          };
-        }
+        // Add temperature for all models (customize per endpoint if needed)
+        streamOptions.temperature = appConfig.ai.defaultTemperature;
         
         const result = await streamText(streamOptions);
         
@@ -1584,18 +1552,9 @@ Original request: ${prompt}
 Provide the complete file content without any truncation. Include all necessary imports, complete all functions, and close all tags properly.`;
                 
                 // Make a focused API call to complete this specific file
-                // Create a new client for the completion based on the provider
-                let completionClient;
-                if (model.includes('gpt') || model.includes('openai')) {
-                  completionClient = openai;
-                } else if (model.includes('claude')) {
-                  completionClient = anthropic;
-                } else {
-                  completionClient = groq;
-                }
-                
+                // Use the same custom OpenAI client for completion
                 const completionResult = await streamText({
-                  model: completionClient(modelMapping[model] || model),
+                  model: customOpenAI(customEndpoint.model),
                   messages: [
                     { 
                       role: 'system', 
@@ -1603,7 +1562,7 @@ Provide the complete file content without any truncation. Include all necessary 
                     },
                     { role: 'user', content: completionPrompt }
                   ],
-                  temperature: isGPT5 ? undefined : appConfig.ai.defaultTemperature,
+                  temperature: appConfig.ai.defaultTemperature,
                   maxTokens: appConfig.ai.truncationRecoveryMaxTokens
                 });
                 
@@ -1660,7 +1619,7 @@ Provide the complete file content without any truncation. Include all necessary 
           explanation,
           files: files.length,
           components: componentCount,
-          model,
+          model: `${customEndpoint.model} @ ${new URL(customEndpoint.url).hostname}`,
           packagesToInstall: packagesToInstall.length > 0 ? packagesToInstall : undefined,
           warnings: truncationWarnings.length > 0 ? truncationWarnings : undefined
         });

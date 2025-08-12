@@ -1,0 +1,72 @@
+services:
+  # Main Open Lovable application
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3000"  # Map external port 3001 to internal port 3000
+      - "5173:5173"  # Vite dev server port for sandboxes
+    environment:
+      - NODE_ENV=production
+      - FIRECRAWL_API_URL=http://firecrawl-api:3002
+    volumes:
+      - ./sandboxes:/app/sandboxes  # Mount sandbox directory
+      - ./data:/app/data  # Persistent data storage
+    depends_on:
+      - firecrawl-api
+    networks:
+      - lovable-network
+
+  # Self-hosted Firecrawl services
+  firecrawl-api:
+    image: ghcr.io/mendableai/firecrawl:latest
+    ports:
+      - "3002:3002"
+    environment:
+      - PORT=3002
+      - HOST=0.0.0.0
+      - USE_DB_AUTHENTICATION=false
+      - REDIS_URL=redis://firecrawl-redis:6379
+      - REDIS_RATE_LIMIT_URL=redis://firecrawl-redis:6379
+      - PLAYWRIGHT_MICROSERVICE_URL=http://firecrawl-playwright:3000/scrape
+      - BULL_AUTH_KEY=CHANGEME
+    depends_on:
+      - firecrawl-redis
+      - firecrawl-playwright
+    networks:
+      - lovable-network
+
+  firecrawl-worker:
+    image: ghcr.io/mendableai/firecrawl:latest
+    environment:
+      - REDIS_URL=redis://firecrawl-redis:6379
+      - REDIS_RATE_LIMIT_URL=redis://firecrawl-redis:6379
+      - PLAYWRIGHT_MICROSERVICE_URL=http://firecrawl-playwright:3000/scrape
+      - USE_DB_AUTHENTICATION=false
+    depends_on:
+      - firecrawl-redis
+      - firecrawl-playwright
+    command: ["pnpm", "run", "workers"]
+    networks:
+      - lovable-network
+
+  firecrawl-playwright:
+    image: ghcr.io/mendableai/playwright-service:latest
+    environment:
+      - PORT=3000
+    networks:
+      - lovable-network
+
+  firecrawl-redis:
+    image: redis:alpine
+    command: redis-server --bind 0.0.0.0
+    networks:
+      - lovable-network
+
+volumes:
+  firecrawl-data:
+
+networks:
+  lovable-network:
+    driver: bridge

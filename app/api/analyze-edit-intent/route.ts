@@ -1,25 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createGroq } from '@ai-sdk/groq';
-import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAI } from '@ai-sdk/openai';
-import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { generateObject } from 'ai';
 import { z } from 'zod';
 import type { FileManifest } from '@/types/file-manifest';
-
-const groq = createGroq({
-  apiKey: process.env.GROQ_API_KEY,
-});
-
-const anthropic = createAnthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-  baseURL: process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com/v1',
-});
-
-const openai = createOpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-  baseURL: process.env.OPENAI_BASE_URL,
-});
 
 // Schema for the AI's search plan - not file selection!
 const searchPlanSchema = z.object({
@@ -51,16 +34,16 @@ const searchPlanSchema = z.object({
 
 export async function POST(request: NextRequest) {
   try {
-    const { prompt, manifest, model = 'openai/gpt-oss-20b' } = await request.json();
+    const { prompt, manifest, customEndpoint } = await request.json();
     
     console.log('[analyze-edit-intent] Request received');
     console.log('[analyze-edit-intent] Prompt:', prompt);
-    console.log('[analyze-edit-intent] Model:', model);
+    console.log('[analyze-edit-intent] Custom Endpoint:', customEndpoint?.url, customEndpoint?.model);
     console.log('[analyze-edit-intent] Manifest files count:', manifest?.files ? Object.keys(manifest.files).length : 0);
     
-    if (!prompt || !manifest) {
+    if (!prompt || !manifest || !customEndpoint) {
       return NextResponse.json({
-        error: 'prompt and manifest are required'
+        error: 'prompt, manifest and customEndpoint are required'
       }, { status: 400 });
     }
     
@@ -93,24 +76,14 @@ export async function POST(request: NextRequest) {
     console.log('[analyze-edit-intent] Analyzing prompt:', prompt);
     console.log('[analyze-edit-intent] File summary preview:', fileSummary.split('\n').slice(0, 5).join('\n'));
     
-    // Select the appropriate AI model based on the request
-    let aiModel;
-    if (model.startsWith('anthropic/')) {
-      aiModel = anthropic(model.replace('anthropic/', ''));
-    } else if (model.startsWith('openai/')) {
-      if (model.includes('gpt-oss')) {
-        aiModel = groq(model);
-      } else {
-        aiModel = openai(model.replace('openai/', ''));
-      }
-    } else if (model.startsWith('google/')) {
-      aiModel = createGoogleGenerativeAI(model.replace('google/', ''));
-    } else {
-      // Default to groq if model format is unclear
-      aiModel = groq(model);
-    }
+    // Create custom OpenAI client
+    const customOpenAI = createOpenAI({
+      apiKey: customEndpoint.apiKey,
+      baseURL: customEndpoint.url,
+    });
+    const aiModel = customOpenAI(customEndpoint.model);
     
-    console.log('[analyze-edit-intent] Using AI model:', model);
+    console.log('[analyze-edit-intent] Using custom endpoint:', customEndpoint.url, 'with model:', customEndpoint.model);
     
     // Use AI to create a search plan
     const result = await generateObject({

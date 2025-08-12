@@ -60,10 +60,14 @@ export default function AISandboxPage() {
   const [aiEnabled] = useState(true);
   const searchParams = useSearchParams();
   const router = useRouter();
-  const [aiModel, setAiModel] = useState(() => {
-    const modelParam = searchParams.get('model');
-    return appConfig.ai.availableModels.includes(modelParam || '') ? modelParam! : appConfig.ai.defaultModel;
+  const [customEndpoint, setCustomEndpoint] = useState(() => {
+    const savedEndpoint = localStorage.getItem('customEndpoint');
+    return savedEndpoint ? JSON.parse(savedEndpoint) : appConfig.ai.defaultEndpoint;
   });
+  const [showEndpointConfig, setShowEndpointConfig] = useState(false);
+  const [showCustomModel, setShowCustomModel] = useState(false);
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [loadingModels, setLoadingModels] = useState(false);
   const [urlOverlayVisible, setUrlOverlayVisible] = useState(false);
   const [urlInput, setUrlInput] = useState('');
   const [urlStatus, setUrlStatus] = useState<string[]>([]);
@@ -174,6 +178,42 @@ export default function AISandboxPage() {
     
     initializePage();
   }, []); // Run only on mount
+
+  // Save custom endpoint configuration to localStorage
+  useEffect(() => {
+    localStorage.setItem('customEndpoint', JSON.stringify(customEndpoint));
+  }, [customEndpoint]);
+
+  // Fetch available models from the endpoint
+  const fetchAvailableModels = async () => {
+    if (!customEndpoint.url) return;
+    
+    setLoadingModels(true);
+    try {
+      const modelsUrl = customEndpoint.url.replace(/\/v1\/?$/, '') + '/v1/models';
+      const response = await fetch(modelsUrl, {
+        headers: {
+          'Authorization': `Bearer ${customEndpoint.apiKey || 'test'}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        const models = data.data?.map((model: any) => model.id) || [];
+        setAvailableModels(models);
+        console.log('[fetch-models] Found models:', models);
+      } else {
+        console.error('[fetch-models] Failed to fetch models:', response.status);
+        setAvailableModels([]);
+      }
+    } catch (error) {
+      console.error('[fetch-models] Error fetching models:', error);
+      setAvailableModels([]);
+    } finally {
+      setLoadingModels(false);
+    }
+  };
   
   useEffect(() => {
     // Handle Escape key for home screen
@@ -364,7 +404,7 @@ export default function AISandboxPage() {
     setScreenshotError(null);
     
     try {
-      const response = await fetch('/api/create-ai-sandbox', {
+      const response = await fetch('/api/create-local-sandbox', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({})
@@ -383,7 +423,6 @@ export default function AISandboxPage() {
         // Update URL with sandbox ID
         const newParams = new URLSearchParams(searchParams.toString());
         newParams.set('sandbox', data.sandboxId);
-        newParams.set('model', aiModel);
         router.push(`/?${newParams.toString()}`, { scroll: false });
         
         // Fade out loading background after sandbox loads
@@ -468,7 +507,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
       }
       
       // Use streaming endpoint for real-time feedback
-      const response = await fetch('/api/apply-ai-code-stream', {
+      const response = await fetch('/api/apply-local-code-stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -881,7 +920,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
     if (!sandboxData) return;
     
     try {
-      const response = await fetch('/api/get-sandbox-files', {
+      const response = await fetch('/api/get-local-sandbox-files', {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -1536,7 +1575,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           prompt: message,
-          model: aiModel,
+          customEndpoint: customEndpoint,
           context: fullContext,
           isEdit: conversationContext.appliedCode.length > 0
         })
@@ -1890,7 +1929,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
         
         const link = document.createElement('a');
         link.href = data.dataUrl;
-        link.download = data.fileName || 'e2b-project.zip';
+        link.download = data.fileName || 'lovable-project.zip';
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
@@ -2001,7 +2040,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
     
     try {
       addChatMessage('Scraping website content...', 'system');
-      const scrapeResponse = await fetch('/api/scrape-url-enhanced', {
+      const scrapeResponse = await fetch('/api/scrape-url-firecrawl', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url })
@@ -2113,7 +2152,7 @@ Focus on the key sections and content, making it clean and modern while preservi
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           prompt: recreatePrompt,
-          model: aiModel,
+          customEndpoint: customEndpoint,
           context: {
             sandboxId: sandboxData?.id,
             structure: structureContent,
@@ -2305,7 +2344,7 @@ Focus on the key sections and content, making it clean and modern while preservi
     setIsCapturingScreenshot(true);
     setScreenshotError(null);
     try {
-      const response = await fetch('/api/scrape-screenshot', {
+      const response = await fetch('/api/scrape-screenshot-firecrawl', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url })
@@ -2385,7 +2424,7 @@ Focus on the key sections and content, making it clean and modern while preservi
         
         // Screenshot is already being captured in parallel above
         
-        const scrapeResponse = await fetch('/api/scrape-url-enhanced', {
+        const scrapeResponse = await fetch('/api/scrape-url-firecrawl', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ url })
@@ -2471,7 +2510,7 @@ Focus on the key sections and content, making it clean and modern.`;
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ 
             prompt,
-            model: aiModel,
+            customEndpoint: customEndpoint,
             context: {
               sandboxId: sandboxData?.sandboxId,
               structure: structureContent,
@@ -2956,31 +2995,220 @@ Focus on the key sections and content, making it clean and modern.`;
                   )}
               </form>
               
-              {/* Model Selector */}
-              <div className="mt-6 flex items-center justify-center animate-[fadeIn_1s_ease-out]">
-                <select
-                  value={aiModel}
-                  onChange={(e) => {
-                    const newModel = e.target.value;
-                    setAiModel(newModel);
-                    const params = new URLSearchParams(searchParams);
-                    params.set('model', newModel);
-                    if (sandboxData?.sandboxId) {
-                      params.set('sandbox', sandboxData.sandboxId);
-                    }
-                    router.push(`/?${params.toString()}`);
-                  }}
-                  className="px-3 py-1.5 text-sm bg-white border border-gray-300 rounded-[10px] focus:outline-none focus:ring-2 focus:ring-[#36322F] focus:border-transparent"
+              {/* Endpoint Configuration */}
+              <div className="mt-6 flex flex-col items-center justify-center animate-[fadeIn_1s_ease-out] gap-3">
+                <button
+                  onClick={() => setShowEndpointConfig(!showEndpointConfig)}
+                  className="px-4 py-2 text-sm bg-white border border-gray-300 rounded-lg hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[#36322F] focus:border-transparent transition-colors"
                   style={{
                     boxShadow: '0 0 0 1px #e3e1de66, 0 1px 2px #5f4a2e14'
                   }}
                 >
-                  {appConfig.ai.availableModels.map(model => (
-                    <option key={model} value={model}>
-                      {appConfig.ai.modelDisplayNames[model] || model}
-                    </option>
-                  ))}
-                </select>
+                  {showEndpointConfig ? 'Hide' : 'Configure'} LLM Endpoint
+                </button>
+                
+                {showEndpointConfig && (
+                  <div className="w-full max-w-md p-4 bg-white border border-gray-200 rounded-lg shadow-lg">
+                    <div className="space-y-3">
+                      {/* Quick Setup Presets */}
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-2">
+                          Quick Setup
+                        </label>
+                        <div className="flex flex-wrap gap-2 mb-3">
+                          <button
+                            type="button"
+                            onClick={() => setCustomEndpoint({
+                              url: 'http://localhost:11434/v1',
+                              apiKey: 'ollama',
+                              model: 'llama3.2'
+                            })}
+                            className="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
+                          >
+                            Ollama
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setCustomEndpoint({
+                              url: 'http://localhost:8080/v1',
+                              apiKey: '',
+                              model: 'gpt-3.5-turbo'
+                            })}
+                            className="px-2 py-1 text-xs bg-green-100 text-green-700 rounded hover:bg-green-200"
+                          >
+                            LocalAI
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setCustomEndpoint({
+                              url: 'http://localhost:1234/v1',
+                              apiKey: '',
+                              model: 'gpt-3.5-turbo'
+                            })}
+                            className="px-2 py-1 text-xs bg-purple-100 text-purple-700 rounded hover:bg-purple-200"
+                          >
+                            LM Studio
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setCustomEndpoint({
+                              url: 'https://api.openai.com/v1',
+                              apiKey: '',
+                              model: 'gpt-3.5-turbo'
+                            })}
+                            className="px-2 py-1 text-xs bg-orange-100 text-orange-700 rounded hover:bg-orange-200"
+                          >
+                            OpenAI
+                          </button>
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">
+                          API Endpoint URL
+                        </label>
+                        <input
+                          type="text"
+                          value={customEndpoint.url}
+                          onChange={(e) => setCustomEndpoint(prev => ({ ...prev, url: e.target.value }))}
+                          placeholder="http://localhost:8081/v1"
+                          className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#36322F] focus:border-transparent"
+                        />
+                      </div>
+                      
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">
+                          API Key
+                        </label>
+                        <input
+                          type="password"
+                          value={customEndpoint.apiKey}
+                          onChange={(e) => setCustomEndpoint(prev => ({ ...prev, apiKey: e.target.value }))}
+                          placeholder="your-api-key"
+                          className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#36322F] focus:border-transparent"
+                        />
+                      </div>
+                      
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">
+                          Model Name
+                        </label>
+                        <div className="space-y-2">
+                          {showCustomModel ? (
+                            <div className="space-y-2">
+                              <input
+                                type="text"
+                                value={customEndpoint.model}
+                                onChange={(e) => setCustomEndpoint(prev => ({ ...prev, model: e.target.value }))}
+                                placeholder="Enter custom model name"
+                                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#36322F] focus:border-transparent"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => setShowCustomModel(false)}
+                                className="text-xs text-blue-600 hover:text-blue-800"
+                              >
+                                ← Back to available models
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="space-y-2">
+                              <div className="flex gap-2">
+                                <select
+                                  value={customEndpoint.model}
+                                  onChange={(e) => {
+                                    if (e.target.value === 'custom') {
+                                      setShowCustomModel(true);
+                                    } else {
+                                      setCustomEndpoint(prev => ({ ...prev, model: e.target.value }));
+                                    }
+                                  }}
+                                  className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#36322F] focus:border-transparent"
+                                  disabled={loadingModels}
+                                >
+                                  {availableModels.length > 0 ? (
+                                    <>
+                                      <optgroup label="Available Models">
+                                        {availableModels.map(model => (
+                                          <option key={model} value={model}>{model}</option>
+                                        ))}
+                                      </optgroup>
+                                      <optgroup label="Other">
+                                        <option value="custom">🛠️ Custom model name...</option>
+                                      </optgroup>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <option value={customEndpoint.model || 'gpt-3.5-turbo'}>
+                                        {customEndpoint.model || 'gpt-3.5-turbo'}
+                                      </option>
+                                      <option value="custom">🛠️ Custom model name...</option>
+                                    </>
+                                  )}
+                                </select>
+                                <button
+                                  type="button"
+                                  onClick={fetchAvailableModels}
+                                  disabled={!customEndpoint.url || loadingModels}
+                                  className="px-3 py-2 text-xs bg-blue-100 text-blue-700 rounded hover:bg-blue-200 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
+                                  title="Fetch available models from endpoint"
+                                >
+                                  {loadingModels ? '⏳' : '🔄'}
+                                </button>
+                              </div>
+                              <div className="text-xs text-gray-500">
+                                {availableModels.length > 0 ? (
+                                  `Found ${availableModels.length} model(s) from endpoint`
+                                ) : customEndpoint.url ? (
+                                  'Click 🔄 to fetch available models'
+                                ) : (
+                                  'Enter endpoint URL first, then fetch models'
+                                )}
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => setShowCustomModel(true)}
+                                className="text-xs text-blue-600 hover:text-blue-800"
+                              >
+                                Or enter custom model name →
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      
+                      {/* Test Connection Button */}
+                      <div className="pt-2 border-t border-gray-200">
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            // Simple test to validate the endpoint
+                            try {
+                              const response = await fetch('/api/test-endpoint', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ 
+                                  customEndpoint,
+                                  testMessage: 'Hello, this is a connection test.'
+                                })
+                              });
+                              
+                              if (response.ok) {
+                                alert('✅ Connection test successful!');
+                              } else {
+                                alert('❌ Connection test failed. Check your settings.');
+                              }
+                            } catch (error) {
+                              alert('❌ Connection test failed. Check your settings.');
+                            }
+                          }}
+                          className="w-full px-3 py-2 text-sm bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-[#36322F]"
+                        >
+                          🔍 Test Connection
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -2996,27 +3224,10 @@ Focus on the key sections and content, making it clean and modern.`;
           />
         </div>
         <div className="flex items-center gap-2">
-          {/* Model Selector - Left side */}
-          <select
-            value={aiModel}
-            onChange={(e) => {
-              const newModel = e.target.value;
-              setAiModel(newModel);
-              const params = new URLSearchParams(searchParams);
-              params.set('model', newModel);
-              if (sandboxData?.sandboxId) {
-                params.set('sandbox', sandboxData.sandboxId);
-              }
-              router.push(`/?${params.toString()}`);
-            }}
-            className="px-3 py-1.5 text-sm bg-white border border-gray-300 rounded-[10px] focus:outline-none focus:ring-2 focus:ring-[#36322F] focus:border-transparent"
-          >
-            {appConfig.ai.availableModels.map(model => (
-              <option key={model} value={model}>
-                {appConfig.ai.modelDisplayNames[model] || model}
-              </option>
-            ))}
-          </select>
+          {/* Endpoint Info - Left side */}
+          <div className="text-sm text-gray-600 px-2 py-1 bg-gray-50 rounded border border-gray-200">
+            {customEndpoint.model} @ {new URL(customEndpoint.url).hostname}
+          </div>
           <Button 
             variant="code"
             onClick={() => createSandbox()}
