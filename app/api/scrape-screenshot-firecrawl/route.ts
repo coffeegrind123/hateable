@@ -22,9 +22,10 @@ export async function POST(req: NextRequest) {
       },
       body: JSON.stringify({
         url,
-        formats: ['screenshot'], // Regular viewport screenshot
+        formats: ['markdown', 'html'], // Firecrawl Simple may not support screenshot format
         waitFor: 3000, // Wait for page to fully load
-        timeout: 30000
+        timeout: 30000,
+        screenshot: true // Request screenshot if supported
       })
     });
 

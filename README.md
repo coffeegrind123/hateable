@@ -9,8 +9,8 @@
 - **🏠 Fully Self-Hosted**: No external API dependencies required
 - **🤖 Custom LLM Support**: Use any OpenAI-compatible API (Ollama, LocalAI, etc.)
 - **📁 Local Sandboxes**: Code execution in isolated local folders
-- **🔥 Self-Hosted Firecrawl**: Advanced web scraping with anti-bot capabilities
-- **🐳 Docker Ready**: Complete Docker Compose stack with Firecrawl included
+- **🔥 Self-Hosted Firecrawl Simple**: Lightweight web scraping with anti-bot capabilities
+- **🐳 Docker Ready**: Complete Docker Compose stack with Firecrawl Simple included
 - **⚡ Real-time Preview**: Live Vite development server for each sandbox
 
 ## 🚀 Quick Start with Docker (Recommended)
@@ -93,7 +93,7 @@ open-lovable2/
 ├── app/                    # Next.js app directory
 ├── sandboxes/             # Local sandboxes (auto-created)
 ├── data/                  # Persistent application data
-├── docker-compose.yml     # Docker stack with Firecrawl
+├── docker-compose.yml     # Docker stack with Firecrawl Simple
 ├── Dockerfile            # Main app container
 └── setup.sh              # Quick setup script
 ```
@@ -124,7 +124,7 @@ This self-hosted version removes all external dependencies:
 | Feature | Original | Self-Hosted |
 |---------|----------|-------------|
 | Code Execution | E2B Cloud Sandboxes | Local folder sandboxes |
-| Web Scraping | Firecrawl Cloud API | Self-hosted Firecrawl |
+| Web Scraping | Firecrawl Cloud API | Self-hosted Firecrawl Simple |
 | LLM APIs | Fixed provider list | Any OpenAI-compatible API |
 | Infrastructure | Cloud dependencies | Fully self-contained |
 | Cost | Pay per usage | Free (your infrastructure) |

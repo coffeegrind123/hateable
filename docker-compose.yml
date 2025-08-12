@@ -18,43 +18,73 @@ services:
     networks:
       - lovable-network
 
-  # Self-hosted Firecrawl services
+  # Self-hosted Firecrawl Simple services  
+  playwright-service:
+    build:
+      context: https://github.com/devflowinc/firecrawl-simple.git#main
+      dockerfile: apps/playwright-service/Dockerfile
+    environment:
+      - PORT=3000
+      - PROXY_SERVER=${PROXY_SERVER}
+      - PROXY_USERNAME=${PROXY_USERNAME}
+      - PROXY_PASSWORD=${PROXY_PASSWORD}
+      - BLOCK_MEDIA=${BLOCK_MEDIA:-true}
+      - MAX_CONCURRENCY=${MAX_CONCURRENCY:-10}
+      - TWOCAPTCHA_TOKEN=${TWOCAPTCHA_TOKEN}
+    networks:
+      - lovable-network
+
   firecrawl-api:
-    image: ghcr.io/mendableai/firecrawl:latest
+    build:
+      context: https://github.com/devflowinc/firecrawl-simple.git#main
+      dockerfile: apps/api/Dockerfile
     ports:
       - "3002:3002"
     environment:
-      - PORT=3002
-      - HOST=0.0.0.0
-      - USE_DB_AUTHENTICATION=false
       - REDIS_URL=redis://firecrawl-redis:6379
       - REDIS_RATE_LIMIT_URL=redis://firecrawl-redis:6379
-      - PLAYWRIGHT_MICROSERVICE_URL=http://firecrawl-playwright:3000/scrape
-      - BULL_AUTH_KEY=CHANGEME
+      - PLAYWRIGHT_MICROSERVICE_URL=http://playwright-service:3000
+      - PORT=3002
+      - NUM_WORKERS_PER_QUEUE=${NUM_WORKERS_PER_QUEUE:-8}
+      - BULL_AUTH_KEY=${BULL_AUTH_KEY:-changeme-secure-key}
+      - TEST_API_KEY=${TEST_API_KEY:-test-key}
+      - HOST=0.0.0.0
+      - LOGGING_LEVEL=${LOGGING_LEVEL:-info}
+      - MAX_RAM=${MAX_RAM:-0.95}
+      - MAX_CPU=${MAX_CPU:-0.95}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
+      - playwright-service
       - firecrawl-redis
-      - firecrawl-playwright
+    command: ["pnpm", "run", "start:production"]
     networks:
       - lovable-network
 
   firecrawl-worker:
-    image: ghcr.io/mendableai/firecrawl:latest
+    build:
+      context: https://github.com/devflowinc/firecrawl-simple.git#main
+      dockerfile: apps/api/Dockerfile
     environment:
       - REDIS_URL=redis://firecrawl-redis:6379
       - REDIS_RATE_LIMIT_URL=redis://firecrawl-redis:6379
-      - PLAYWRIGHT_MICROSERVICE_URL=http://firecrawl-playwright:3000/scrape
-      - USE_DB_AUTHENTICATION=false
+      - PLAYWRIGHT_MICROSERVICE_URL=http://playwright-service:3000
+      - PORT=3002
+      - NUM_WORKERS_PER_QUEUE=${NUM_WORKERS_PER_QUEUE:-8}
+      - BULL_AUTH_KEY=${BULL_AUTH_KEY:-changeme-secure-key}
+      - TEST_API_KEY=${TEST_API_KEY:-test-key}
+      - SCRAPING_BEE_API_KEY=${SCRAPING_BEE_API_KEY}
+      - HOST=0.0.0.0
+      - LOGGING_LEVEL=${LOGGING_LEVEL:-info}
+      - MAX_RAM=${MAX_RAM:-0.95}
+      - MAX_CPU=${MAX_CPU:-0.95}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
+      - playwright-service
+      - firecrawl-api
       - firecrawl-redis
-      - firecrawl-playwright
     command: ["pnpm", "run", "workers"]
-    networks:
-      - lovable-network
-
-  firecrawl-playwright:
-    image: ghcr.io/mendableai/playwright-service:latest
-    environment:
-      - PORT=3000
     networks:
       - lovable-network
 
