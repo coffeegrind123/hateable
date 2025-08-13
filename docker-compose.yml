@@ -21,8 +21,8 @@ services:
   # Self-hosted Firecrawl Simple services with pydoll  
   pydoll-service:
     build:
-      context: ./firecrawl-simple
-      dockerfile: apps/pydoll-service/Dockerfile
+      context: ./firecrawl-simple/apps/pydoll-service
+      dockerfile: Dockerfile
     environment:
       - PORT=3003
       - PROXY_SERVER=${PROXY_SERVER}
@@ -34,8 +34,8 @@ services:
 
   firecrawl-api:
     build:
-      context: ./firecrawl-simple
-      dockerfile: apps/api/Dockerfile
+      context: ./firecrawl-simple/apps/api
+      dockerfile: Dockerfile
     ports:
       - "3002:3002"
     environment:
@@ -61,8 +61,8 @@ services:
 
   firecrawl-worker:
     build:
-      context: ./firecrawl-simple
-      dockerfile: apps/api/Dockerfile
+      context: ./firecrawl-simple/apps/api
+      dockerfile: Dockerfile
     environment:
       - REDIS_URL=redis://firecrawl-redis:6379
       - REDIS_RATE_LIMIT_URL=redis://firecrawl-redis:6379
