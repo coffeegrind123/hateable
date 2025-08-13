@@ -148,11 +148,12 @@ export async function POST(request: NextRequest) {
           console.log('[generate-ai-code-stream] Has manifest:', !!global.sandboxState?.fileCache?.manifest);
           
           const manifest: FileManifest | undefined = global.sandboxState?.fileCache?.manifest;
+          const fileCache = global.sandboxState?.fileCache;
           
-          if (manifest) {
+          if (manifest && fileCache) {
             await sendProgress({ type: 'status', message: '🔍 Creating search plan...' });
             
-            const fileContents = global.sandboxState.fileCache.files;
+            const fileContents = fileCache.files;
             console.log('[generate-ai-code-stream] Files available for search:', Object.keys(fileContents).length);
             
             // STEP 1: Get search plan from AI
@@ -313,7 +314,7 @@ User request: "${prompt}"`;
                         
                         // For now, fall back to keyword search since we don't have file contents for search execution
                         // This path happens when no manifest was initially available
-                        let targetFiles = [];
+                        let targetFiles: string[] = [];
                         if (!searchPlan || searchPlan.searchTerms.length === 0) {
                           console.warn('[generate-ai-code-stream] No target files after fetch, searching for relevant files');
                           
@@ -935,15 +936,17 @@ CRITICAL: When files are provided in the context:
                   }
                   
                   // Store files in cache
-                  for (const [path, content] of Object.entries(filesData.files)) {
-                    const normalizedPath = path.replace('/home/user/app/', '');
-                    global.sandboxState.fileCache.files[normalizedPath] = {
+                  if (global.sandboxState.fileCache) {
+                    for (const [path, content] of Object.entries(filesData.files)) {
+                      const normalizedPath = path.replace('/home/user/app/', '');
+                      global.sandboxState.fileCache.files[normalizedPath] = {
                       content: content as string,
                       lastModified: Date.now()
                     };
+                    }
                   }
                   
-                  if (filesData.manifest) {
+                  if (filesData.manifest && global.sandboxState.fileCache) {
                     global.sandboxState.fileCache.manifest = filesData.manifest;
                     
                     // Now try to analyze edit intent with the fetched manifest
@@ -975,8 +978,10 @@ CRITICAL: When files are provided in the context:
                   }
                   
                   // Update variables
-                  backendFiles = global.sandboxState.fileCache.files;
-                  hasBackendFiles = Object.keys(backendFiles).length > 0;
+                  if (global.sandboxState.fileCache) {
+                    backendFiles = global.sandboxState.fileCache.files;
+                    hasBackendFiles = Object.keys(backendFiles).length > 0;
+                  }
                   console.log('[generate-ai-code-stream] Updated backend cache with fetched files');
                 }
               }
@@ -1562,8 +1567,7 @@ Provide the complete file content without any truncation. Include all necessary 
                     },
                     { role: 'user', content: completionPrompt }
                   ],
-                  temperature: appConfig.ai.defaultTemperature,
-                  maxTokens: appConfig.ai.truncationRecoveryMaxTokens
+                  temperature: appConfig.ai.defaultTemperature
                 });
                 
                 // Get the full text from the stream

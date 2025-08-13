@@ -1,20 +1,35 @@
 # Multi-stage build for Open Lovable with Firecrawl
-FROM node:20-alpine AS base
+FROM node:20-slim AS base
 
 # Install dependencies only when needed
 FROM base AS deps
-RUN apk add --no-cache libc6-compat python3 make g++
+RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 
 # Install dependencies based on the preferred package manager
+# Remove pnpm lockfile to avoid conflicts with npm
 COPY package.json package-lock.json* ./
-RUN npm ci
+RUN rm -f pnpm-lock.yaml
+RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
+
+# Install firecrawl-simple submodule dependencies
+COPY firecrawl-simple/apps/api/package.json ./firecrawl-simple/apps/api/
+WORKDIR /app/firecrawl-simple/apps/api
+RUN npm install
+WORKDIR /app
 
 # Rebuild the source code only when needed
 FROM base AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/firecrawl-simple/apps/api/node_modules ./firecrawl-simple/apps/api/node_modules
 COPY . .
+# Remove pnpm lockfile to avoid conflicts with npm
+RUN rm -f pnpm-lock.yaml
+# Rebuild native modules for the current platform
+RUN npm rebuild
+# Explicitly reinstall native dependencies to ensure native binaries are present
+RUN npm install lightningcss @tailwindcss/oxide --force
 
 # Set environment variables for build
 ENV NEXT_TELEMETRY_DISABLED=1
@@ -30,8 +45,8 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
 # Create a non-root user
-RUN addgroup --system --gid 1001 nodejs
-RUN adduser --system --uid 1001 nextjs
+RUN groupadd --system --gid 1001 nodejs
+RUN useradd --system --uid 1001 --gid nodejs --shell /bin/bash --create-home nextjs
 
 # Copy the public folder
 COPY --from=builder /app/public ./public

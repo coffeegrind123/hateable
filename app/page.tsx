@@ -123,7 +123,7 @@ export default function AISandboxPage() {
     thinkingText?: string;
     thinkingDuration?: number;
     currentFile?: { path: string; content: string; type: string };
-    files: Array<{ path: string; content: string; type: string; completed: boolean }>;
+    files: Array<{ path: string; content: string; type: string; completed: boolean; edited?: boolean }>;
     lastProcessedPosition: number;
     isEdit?: boolean;
   }>({
@@ -555,7 +555,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                   } else if (data.message.includes('Creating files') || data.message.includes('Applying')) {
                     setCodeApplicationState({ 
                       stage: 'applying',
-                      filesGenerated: results.filesCreated 
+                      filesGenerated: data.filesCreated || [] 
                     });
                   }
                   break;
@@ -716,22 +716,22 @@ Tip: I automatically detect and install npm packages from your code imports (lik
           log(data.explanation);
         }
         
-        if (data.autoCompleted) {
+        if ((data as any).autoCompleted) {
           log('Auto-generating missing components...', 'command');
           
-          if (data.autoCompletedComponents) {
+          if ((data as any).autoCompletedComponents) {
             setTimeout(() => {
               log('Auto-generated missing components:', 'info');
-              data.autoCompletedComponents.forEach((comp: string) => {
+              (data as any).autoCompletedComponents.forEach((comp: string) => {
                 log(`  ${comp}`, 'command');
               });
             }, 1000);
           }
-        } else if (data.warning) {
-          log(data.warning, 'error');
+        } else if ((data as any).warning) {
+          log((data as any).warning, 'error');
           
-          if (data.missingImports && data.missingImports.length > 0) {
-            const missingList = data.missingImports.join(', ');
+          if ((data as any).missingImports && (data as any).missingImports.length > 0) {
+            const missingList = (data as any).missingImports.join(', ');
             addChatMessage(
               `Ask me to "create the missing components: ${missingList}" to fix these import errors.`,
               'system'
@@ -741,7 +741,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
         
         log('Code applied successfully!');
         console.log('[applyGeneratedCode] Response data:', data);
-        console.log('[applyGeneratedCode] Debug info:', data.debug);
+        console.log('[applyGeneratedCode] Debug info:', (data as any).debug);
         console.log('[applyGeneratedCode] Current sandboxData:', sandboxData);
         console.log('[applyGeneratedCode] Current iframe element:', iframeRef.current);
         console.log('[applyGeneratedCode] Current iframe src:', iframeRef.current?.src);
@@ -1036,7 +1036,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                       // Create a map of edited files
                       const editedFiles = new Set(
                         generationProgress.files
-                          .filter(f => f.edited)
+                          .filter(f => (f as any).edited)
                           .map(f => f.path)
                       );
                       
@@ -1049,7 +1049,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                         if (!fileTree[dir]) fileTree[dir] = [];
                         fileTree[dir].push({
                           name: fileName,
-                          edited: file.edited || false
+                          edited: (file as any).edited || false
                         });
                       });
                       
@@ -3069,7 +3069,7 @@ Focus on the key sections and content, making it clean and modern.`;
                         <input
                           type="text"
                           value={customEndpoint.url}
-                          onChange={(e) => setCustomEndpoint(prev => ({ ...prev, url: e.target.value }))}
+                          onChange={(e) => setCustomEndpoint((prev: { url: string; apiKey: string; model: string }) => ({ ...prev, url: e.target.value }))}
                           placeholder="http://localhost:8081/v1"
                           className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#36322F] focus:border-transparent"
                         />
@@ -3082,7 +3082,7 @@ Focus on the key sections and content, making it clean and modern.`;
                         <input
                           type="password"
                           value={customEndpoint.apiKey}
-                          onChange={(e) => setCustomEndpoint(prev => ({ ...prev, apiKey: e.target.value }))}
+                          onChange={(e) => setCustomEndpoint((prev: { url: string; apiKey: string; model: string }) => ({ ...prev, apiKey: e.target.value }))}
                           placeholder="your-api-key"
                           className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#36322F] focus:border-transparent"
                         />
@@ -3098,7 +3098,7 @@ Focus on the key sections and content, making it clean and modern.`;
                               <input
                                 type="text"
                                 value={customEndpoint.model}
-                                onChange={(e) => setCustomEndpoint(prev => ({ ...prev, model: e.target.value }))}
+                                onChange={(e) => setCustomEndpoint((prev: { url: string; apiKey: string; model: string }) => ({ ...prev, model: e.target.value }))}
                                 placeholder="Enter custom model name"
                                 className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#36322F] focus:border-transparent"
                               />
@@ -3119,7 +3119,7 @@ Focus on the key sections and content, making it clean and modern.`;
                                     if (e.target.value === 'custom') {
                                       setShowCustomModel(true);
                                     } else {
-                                      setCustomEndpoint(prev => ({ ...prev, model: e.target.value }));
+                                      setCustomEndpoint((prev: { url: string; apiKey: string; model: string }) => ({ ...prev, model: e.target.value }));
                                     }
                                   }}
                                   className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#36322F] focus:border-transparent"

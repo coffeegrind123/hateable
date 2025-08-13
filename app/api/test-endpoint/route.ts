@@ -31,8 +31,7 @@ export async function POST(request: NextRequest) {
           content: testMessage || 'Say "Hello" to test the connection.'
         }
       ],
-      temperature: 0.1,
-      maxTokens: 50
+      temperature: 0.1
     });
     
     console.log('[test-endpoint] Test successful, response:', result.text);
