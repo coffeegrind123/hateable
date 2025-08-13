@@ -18,32 +18,30 @@ services:
     networks:
       - lovable-network
 
-  # Self-hosted Firecrawl Simple services  
-  playwright-service:
+  # Self-hosted Firecrawl Simple services with pydoll  
+  pydoll-service:
     build:
-      context: https://github.com/devflowinc/firecrawl-simple.git#main
-      dockerfile: apps/playwright-service/Dockerfile
+      context: ../firecrawl-simple
+      dockerfile: apps/pydoll-service/Dockerfile
     environment:
-      - PORT=3000
+      - PORT=3003
       - PROXY_SERVER=${PROXY_SERVER}
       - PROXY_USERNAME=${PROXY_USERNAME}
       - PROXY_PASSWORD=${PROXY_PASSWORD}
-      - BLOCK_MEDIA=${BLOCK_MEDIA:-true}
       - MAX_CONCURRENCY=${MAX_CONCURRENCY:-10}
-      - TWOCAPTCHA_TOKEN=${TWOCAPTCHA_TOKEN}
     networks:
       - lovable-network
 
   firecrawl-api:
     build:
-      context: https://github.com/devflowinc/firecrawl-simple.git#main
+      context: ../firecrawl-simple
       dockerfile: apps/api/Dockerfile
     ports:
       - "3002:3002"
     environment:
       - REDIS_URL=redis://firecrawl-redis:6379
       - REDIS_RATE_LIMIT_URL=redis://firecrawl-redis:6379
-      - PLAYWRIGHT_MICROSERVICE_URL=http://playwright-service:3000
+      - PLAYWRIGHT_MICROSERVICE_URL=http://pydoll-service:3003/scrape
       - PORT=3002
       - NUM_WORKERS_PER_QUEUE=${NUM_WORKERS_PER_QUEUE:-8}
       - BULL_AUTH_KEY=${BULL_AUTH_KEY:-changeme-secure-key}
@@ -55,7 +53,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
-      - playwright-service
+      - pydoll-service
       - firecrawl-redis
     command: ["pnpm", "run", "start:production"]
     networks:
@@ -63,12 +61,12 @@ services:
 
   firecrawl-worker:
     build:
-      context: https://github.com/devflowinc/firecrawl-simple.git#main
+      context: ../firecrawl-simple
       dockerfile: apps/api/Dockerfile
     environment:
       - REDIS_URL=redis://firecrawl-redis:6379
       - REDIS_RATE_LIMIT_URL=redis://firecrawl-redis:6379
-      - PLAYWRIGHT_MICROSERVICE_URL=http://playwright-service:3000
+      - PLAYWRIGHT_MICROSERVICE_URL=http://pydoll-service:3003/scrape
       - PORT=3002
       - NUM_WORKERS_PER_QUEUE=${NUM_WORKERS_PER_QUEUE:-8}
       - BULL_AUTH_KEY=${BULL_AUTH_KEY:-changeme-secure-key}
@@ -81,7 +79,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
-      - playwright-service
+      - pydoll-service
       - firecrawl-api
       - firecrawl-redis
     command: ["pnpm", "run", "workers"]
