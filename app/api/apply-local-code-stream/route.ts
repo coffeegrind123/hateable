@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { promises as fs } from 'fs';
 import path from 'path';
-import { exec } from 'child_process';
+import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
+import { appConfig } from '@/config/app.config';
 
 const execAsync = promisify(exec);
 
@@ -186,12 +187,74 @@ export async function POST(request: NextRequest) {
           }
         }
         
+        // Restart Vite server to pick up changes
+        await sendProgress({ 
+          type: 'status', 
+          message: 'Restarting Vite dev server...' 
+        });
+        
+        try {
+          // Kill existing Vite process if any
+          if (global.activeSandbox?.viteProcess) {
+            try {
+              global.activeSandbox.viteProcess.kill('SIGTERM');
+              await new Promise(resolve => setTimeout(resolve, 1000)); // Wait for process to die
+            } catch (e) {
+              console.warn('[apply-local-code-stream] Failed to kill existing Vite process:', e);
+            }
+          }
+          
+          // Start new Vite dev server
+          const viteProcess = spawn('npm', ['run', 'dev'], {
+            cwd: sandboxPath,
+            stdio: ['inherit', 'pipe', 'pipe'],
+            env: { ...process.env, FORCE_COLOR: '0' }
+          });
+
+          // Wait for Vite to start
+          await new Promise((resolve) => {
+            const timeout = setTimeout(resolve, appConfig.sandbox.viteStartupDelay);
+            
+            viteProcess.stdout?.on('data', (data) => {
+              const output = data.toString();
+              console.log('[vite restart]', output);
+              if (output.includes('Local:') || output.includes('ready')) {
+                clearTimeout(timeout);
+                resolve(undefined);
+              }
+            });
+            
+            viteProcess.stderr?.on('data', (data) => {
+              console.error('[vite restart error]', data.toString());
+            });
+          });
+          
+          // Update global sandbox with new process (ensure global.activeSandbox exists)
+          if (global.activeSandbox) {
+            global.activeSandbox.viteProcess = viteProcess;
+          } else {
+            console.warn('[apply-local-code-stream] global.activeSandbox is null, cannot set viteProcess');
+          }
+          
+          await sendProgress({ 
+            type: 'status', 
+            message: 'Vite dev server restarted successfully' 
+          });
+          
+        } catch (viteError: any) {
+          console.error('[apply-local-code-stream] Vite restart failed:', viteError);
+          await sendProgress({
+            type: 'warning',
+            message: `Vite restart had issues: ${viteError.message}`
+          });
+        }
+        
         await sendProgress({
           type: 'complete',
           files: parsed.files.map(f => f.path),
           packages: allPackages,
           explanation: parsed.explanation,
-          message: 'Code applied successfully'
+          message: 'Code applied successfully and Vite server restarted'
         });
         
       } catch (error) {

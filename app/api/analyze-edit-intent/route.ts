@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createOpenAI } from '@ai-sdk/openai';
-import { generateObject } from 'ai';
+// Using OpenAI SDK directly to avoid endpoint issues
 import { z } from 'zod';
 import type { FileManifest } from '@/types/file-manifest';
 
@@ -76,19 +75,19 @@ export async function POST(request: NextRequest) {
     console.log('[analyze-edit-intent] Analyzing prompt:', prompt);
     console.log('[analyze-edit-intent] File summary preview:', fileSummary.split('\n').slice(0, 5).join('\n'));
     
-    // Create custom OpenAI client
-    const customOpenAI = createOpenAI({
-      apiKey: customEndpoint.apiKey,
+    // Use OpenAI SDK directly to avoid endpoint issues
+    const { OpenAI } = await import('openai');
+    const openaiClient = new OpenAI({
+      apiKey: customEndpoint.apiKey || 'sk-placeholder',
       baseURL: customEndpoint.url,
     });
-    const aiModel = customOpenAI(customEndpoint.model);
     
     console.log('[analyze-edit-intent] Using custom endpoint:', customEndpoint.url, 'with model:', customEndpoint.model);
     
-    // Use AI to create a search plan
-    const result = await generateObject({
-      model: aiModel,
-      schema: searchPlanSchema,
+    // Use OpenAI client for structured generation
+    const response = await openaiClient.chat.completions.create({
+      model: customEndpoint.model,
+      response_format: { type: "json_object" },
       messages: [
         {
           role: 'system',
@@ -130,17 +129,21 @@ Create a search plan to find the exact code that needs to be modified. Include s
       ]
     });
     
+    // Parse the JSON response
+    const resultContent = response.choices[0]?.message?.content || '{}';
+    const result = JSON.parse(resultContent);
+    
     console.log('[analyze-edit-intent] Search plan created:', {
-      editType: result.object.editType,
-      searchTerms: result.object.searchTerms,
-      patterns: result.object.regexPatterns?.length || 0,
-      reasoning: result.object.reasoning
+      editType: result.editType,
+      searchTerms: result.searchTerms,
+      patterns: result.regexPatterns?.length || 0,
+      reasoning: result.reasoning
     });
     
     // Return the search plan, not file matches
     return NextResponse.json({
       success: true,
-      searchPlan: result.object
+      searchPlan: result
     });
     
   } catch (error) {

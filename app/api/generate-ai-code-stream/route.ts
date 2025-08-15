@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createOpenAI } from '@ai-sdk/openai';
-import { streamText } from 'ai';
+// Removed AI SDK imports - using OpenAI SDK directly
 import type { SandboxState } from '@/types/sandbox';
 import { selectFilesForEdit, getFileContents, formatFilesForAI } from '@/lib/context-selector';
 import { executeSearchPlan, formatSearchResultsForAI, selectTargetFile } from '@/lib/file-search-executor';
@@ -835,6 +834,22 @@ CRITICAL COMPLETION RULES:
 5. If App.jsx imports 10 components, generate ALL 10
 6. Complete EVERYTHING before ending your response
 
+IMPORT VALIDATION RULES (PREVENT MISSING COMPONENT ERRORS):
+7. BEFORE writing any file, VALIDATE all imports will be satisfied
+8. For EVERY import statement, either:
+   - The imported file already exists in the project, OR
+   - You will create that file in your current response
+9. Example: If you write "import Header from './components/Header'" you MUST also create src/components/Header.jsx
+10. SELF-CHECK: Count imports vs files you're creating - they MUST match
+11. If you reference a component/module you won't create, DON'T import it
+12. When in doubt: Create the component OR remove the import entirely
+
+COMPONENT CREATION VALIDATION:
+- After writing each file, verify all its imports are satisfied
+- If you import 5 components, create all 5 component files
+- Never leave dangling imports - this breaks the build
+- Each import MUST have a corresponding file creation
+
 With 16,000 tokens available, you have plenty of space to generate a complete application. Use it!
 
 UNDERSTANDING USER INTENT FOR INCREMENTAL VS FULL GENERATION:
@@ -1138,15 +1153,16 @@ CRITICAL: When files are provided in the context:
         // Track packages that need to be installed
         const packagesToInstall: string[] = [];
         
-        // Create OpenAI-compatible client with custom endpoint
-        const customOpenAI = createOpenAI({
-          apiKey: customEndpoint.apiKey,
+        // Use OpenAI SDK directly to avoid endpoint issues
+        const { OpenAI } = await import('openai');
+        const openaiClient = new OpenAI({
+          apiKey: customEndpoint.apiKey || 'sk-placeholder',
           baseURL: customEndpoint.url,
         });
 
-        // Make streaming API call with custom provider
-        const streamOptions: any = {
-          model: customOpenAI(customEndpoint.model),
+        // Use non-streaming for now to avoid compilation issues
+        const response = await openaiClient.chat.completions.create({
+          model: customEndpoint.model,
           messages: [
             { 
               role: 'system', 
@@ -1181,7 +1197,7 @@ Examples of SYNTAX ERRORS (NEVER DO THIS):
 Examples of CORRECT CODE (ALWAYS DO THIS):
 ✅ className="px-4 py-2 bg-blue-600 hover:bg-blue-700"
 ✅ <button className="btn btn-primary btn-large">
-✅ const title = "Welcome to our application"
+✅ className="Welcome to our application"
 ✅ import { useState, useEffect, useCallback } from 'react'
 
 REMEMBER: It's better to generate fewer COMPLETE files than many INCOMPLETE files.`
@@ -1207,16 +1223,28 @@ If you're running out of space, generate FEWER files but make them COMPLETE.
 It's better to have 3 complete files than 10 incomplete files.`
             }
           ],
-          maxTokens: 8192, // Reduce to ensure completion
-          stopSequences: [] // Don't stop early
-          // Note: Neither Groq nor Anthropic models support tool/function calling in this context
-          // We use XML tags for package detection instead
+          max_tokens: 8192,
+          temperature: appConfig.ai.defaultTemperature,
+          stream: false
+        });
+        
+        // Get the generated content and simulate streaming
+        const fullContent = response.choices[0]?.message?.content || '';
+        console.log('[generate-ai-code-stream] Generated content length:', fullContent.length);
+        
+        // Create a mock streaming interface for existing code compatibility
+        const result = {
+          textStream: (async function* () {
+            // Split content into chunks to simulate streaming
+            const chunkSize = 100;
+            for (let i = 0; i < fullContent.length; i += chunkSize) {
+              const chunk = fullContent.slice(i, i + chunkSize);
+              yield chunk;
+              // Small delay to simulate streaming
+              await new Promise(resolve => setTimeout(resolve, 10));
+            }
+          })()
         };
-        
-        // Add temperature for all models (customize per endpoint if needed)
-        streamOptions.temperature = appConfig.ai.defaultTemperature;
-        
-        const result = await streamText(streamOptions);
         
         // Stream the response and parse in real-time
         let generatedCode = '';
@@ -1231,8 +1259,12 @@ It's better to have 3 complete files than 10 incomplete files.`
         let tagBuffer = '';
         
         // Stream the response and parse for packages in real-time
+        console.log('[generate-ai-code-stream] Starting stream consumption...');
         for await (const textPart of result.textStream) {
           const text = textPart || '';
+          if (text) {
+            console.log('[generate-ai-code-stream] Received chunk:', text.substring(0, 50) + '...');
+          }
           generatedCode += text;
           currentFile += text;
           
@@ -1558,8 +1590,9 @@ Provide the complete file content without any truncation. Include all necessary 
                 
                 // Make a focused API call to complete this specific file
                 // Use the same custom OpenAI client for completion
-                const completionResult = await streamText({
-                  model: customOpenAI(customEndpoint.model),
+                // Use OpenAI client for completion as well
+                const completionStream = await openaiClient.chat.completions.create({
+                  model: customEndpoint.model,
                   messages: [
                     { 
                       role: 'system', 
@@ -1567,14 +1600,12 @@ Provide the complete file content without any truncation. Include all necessary 
                     },
                     { role: 'user', content: completionPrompt }
                   ],
-                  temperature: appConfig.ai.defaultTemperature
+                  temperature: appConfig.ai.defaultTemperature,
+                  stream: false
                 });
                 
-                // Get the full text from the stream
-                let completedContent = '';
-                for await (const chunk of completionResult.textStream) {
-                  completedContent += chunk;
-                }
+                // Get the completion content
+                const completedContent = completionStream.choices[0]?.message?.content || '';
                 
                 // Replace the truncated file in the generatedCode
                 const filePattern = new RegExp(

@@ -22,10 +22,10 @@ export async function POST(req: NextRequest) {
       },
       body: JSON.stringify({
         url,
-        formats: ['markdown', 'html'], // Firecrawl Simple may not support screenshot format
+        formats: ['markdown', 'rawHtml'], // Use rawHtml instead of html
         waitFor: 3000, // Wait for page to fully load
         timeout: 30000,
-        screenshot: true // Request screenshot if supported
+        // screenshot: true // Request screenshot if supported - removed due to API incompatibility
       })
     });
 

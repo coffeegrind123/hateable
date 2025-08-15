@@ -1,4 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { promises as fs } from 'fs';
+import path from 'path';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
 
 declare global {
   var activeSandbox: any;
@@ -6,7 +12,7 @@ declare global {
 
 export async function POST(request: NextRequest) {
   try {
-    if (!global.activeSandbox) {
+    if (!global.activeSandbox?.sandboxPath) {
       return NextResponse.json({ 
         success: false, 
         error: 'No active sandbox' 
@@ -15,49 +21,40 @@ export async function POST(request: NextRequest) {
     
     console.log('[create-zip] Creating project zip...');
     
-    // Create zip file in sandbox
-    const result = await global.activeSandbox.runCode(`
-import zipfile
-import os
-import json
-
-os.chdir('/home/user/app')
-
-# Create zip file
-with zipfile.ZipFile('/tmp/project.zip', 'w', zipfile.ZIP_DEFLATED) as zipf:
-    for root, dirs, files in os.walk('.'):
-        # Skip node_modules and .git
-        dirs[:] = [d for d in dirs if d not in ['node_modules', '.git', '.next', 'dist']]
-        
-        for file in files:
-            file_path = os.path.join(root, file)
-            arcname = os.path.relpath(file_path, '.')
-            zipf.write(file_path, arcname)
-
-# Get file size
-file_size = os.path.getsize('/tmp/project.zip')
-print(f" Created project.zip ({file_size} bytes)")
-    `);
+    const sandboxPath = global.activeSandbox.sandboxPath;
+    const sandboxId = global.activeSandbox.sandboxId || 'lovable-project';
+    const zipPath = path.join('/tmp', `${sandboxId}.zip`);
     
-    // Read the zip file and convert to base64
-    const readResult = await global.activeSandbox.runCode(`
-import base64
-
-with open('/tmp/project.zip', 'rb') as f:
-    content = f.read()
-    encoded = base64.b64encode(content).decode('utf-8')
-    print(encoded)
-    `);
+    // Use system zip command to create the archive
+    // Exclude node_modules, .git, .next, dist, and other build artifacts
+    const zipCommand = `cd "${sandboxPath}" && zip -r "${zipPath}" . -x "node_modules/*" ".git/*" ".next/*" "dist/*" ".cache/*" "*.log"`;
     
-    const base64Content = readResult.logs.stdout.join('').trim();
+    console.log('[create-zip] Running zip command:', zipCommand);
+    
+    await execAsync(zipCommand, { timeout: 30000 });
+    
+    // Read the zip file
+    const zipBuffer = await fs.readFile(zipPath);
+    
+    // Convert to base64
+    const base64Content = zipBuffer.toString('base64');
     
     // Create a data URL for download
     const dataUrl = `data:application/zip;base64,${base64Content}`;
     
+    // Clean up the temporary zip file
+    try {
+      await fs.unlink(zipPath);
+    } catch (cleanupError) {
+      console.warn('[create-zip] Failed to cleanup temp file:', cleanupError);
+    }
+    
+    console.log(`[create-zip] Created zip file (${zipBuffer.length} bytes)`);
+    
     return NextResponse.json({
       success: true,
       dataUrl,
-      fileName: 'lovable-project.zip',
+      fileName: `${sandboxId}.zip`,
       message: 'Zip file created successfully'
     });
     

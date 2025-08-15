@@ -6,12 +6,22 @@
   "scripts": {
     "dev": "next dev --turbopack",
     "build": "next build",
+    "build:prod": "NODE_ENV=production next build",
+    "build:analyze": "ANALYZE=true next build",
     "start": "next start",
+    "start:production": "NODE_ENV=production next start",
     "lint": "next lint",
+    "lint:fix": "next lint --fix",
+    "type-check": "tsc --noEmit",
+    "clean": "rm -rf .next out node_modules/.cache",
     "test:integration": "node tests/local-integration.test.js",
-    "test:api": "node tests/api-endpoints.test.js",
+    "test:api": "node tests/api-endpoints.test.js", 
     "test:code": "node tests/code-execution.test.js",
-    "test:all": "npm run test:integration && npm run test:api && npm run test:code"
+    "test:all": "pnpm run test:integration && pnpm run test:api && pnpm run test:code",
+    "docker:build": "docker build -t open-hateable .",
+    "docker:run": "docker run -p 3000:3000 -p 5173:5173 open-hateable",
+    "docker:build-prod": "docker build --target runner -t open-hateable:prod .",
+    "preinstall": "npx only-allow pnpm"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^2.0.1",
@@ -33,6 +43,7 @@
     "groq-sdk": "^0.29.0",
     "lucide-react": "^0.532.0",
     "next": "15.4.3",
+    "openai": "^4.73.1",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "react-icons": "^5.5.0",
@@ -50,6 +61,15 @@
     "eslint": "^9",
     "eslint-config-next": "15.4.3",
     "tailwindcss": "^4.1.11",
-    "typescript": "^5"
-  }
+    "typescript": "^5",
+    "@next/bundle-analyzer": "^15.1.0",
+    "critters": "^0.0.24",
+    "cross-env": "^7.0.3",
+    "only-allow": "^1.2.1"
+  },
+  "engines": {
+    "node": ">=20.18.0",
+    "pnpm": ">=10.14.0"
+  },
+  "packageManager": "pnpm@10.14.0"
 }

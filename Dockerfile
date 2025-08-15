@@ -1,41 +1,62 @@
 # Multi-stage build for Open Lovable with Firecrawl
 FROM node:20-slim AS base
 
+# Enable corepack for pnpm
+RUN corepack enable
+
 # Install dependencies only when needed
 FROM base AS deps
 RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 
-# Install dependencies based on the preferred package manager
-# Remove pnpm lockfile to avoid conflicts with npm
-COPY package.json package-lock.json* ./
-RUN rm -f pnpm-lock.yaml
-RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
+# Install latest pnpm
+RUN corepack install -g pnpm@10.14.0
+
+# Copy configuration files
+COPY package.json pnpm-lock.yaml* .npmrc ./
+
+# Install dependencies using pnpm and allow build scripts
+RUN if [ -f pnpm-lock.yaml ]; then \
+  pnpm install --frozen-lockfile --prod=false; \
+else \
+  pnpm install; \
+fi
+
+# Ensure critters is available for production builds
+RUN pnpm add critters@^0.0.24
 
 # Install firecrawl-simple submodule dependencies
-COPY firecrawl-simple/apps/api/package.json ./firecrawl-simple/apps/api/
+COPY firecrawl-simple/apps/api/package.json firecrawl-simple/apps/api/pnpm-lock.yaml* ./firecrawl-simple/apps/api/
 WORKDIR /app/firecrawl-simple/apps/api
-RUN npm install
+RUN if [ -f pnpm-lock.yaml ]; then \
+  pnpm install --frozen-lockfile --prod=false; \
+else \
+  pnpm install; \
+fi
 WORKDIR /app
 
 # Rebuild the source code only when needed
 FROM base AS builder
 WORKDIR /app
+
+# Enable corepack and install pnpm
+RUN corepack enable && corepack install -g pnpm@10.14.0
+
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/firecrawl-simple/apps/api/node_modules ./firecrawl-simple/apps/api/node_modules
 COPY . .
-# Remove pnpm lockfile to avoid conflicts with npm
-RUN rm -f pnpm-lock.yaml
+
 # Rebuild native modules for the current platform
-RUN npm rebuild
-# Explicitly reinstall native dependencies to ensure native binaries are present
-RUN npm install lightningcss @tailwindcss/oxide --force
+RUN pnpm rebuild
 
-# Set environment variables for build
+# Set environment variables for production build
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV NODE_ENV=production
 
-# Build the application
-RUN npm run build
+# Build the application for production
+ENV NODE_OPTIONS="--max-old-space-size=16384"
+ENV NEXT_DISABLE_TRACE=1
+RUN pnpm run build:prod
 
 # Production image, copy all the files and run next
 FROM base AS runner

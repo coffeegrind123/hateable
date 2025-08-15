@@ -41,7 +41,7 @@ export async function POST(request: NextRequest) {
       },
       body: JSON.stringify({
         url,
-        formats: ['markdown', 'html'],
+        formats: ['markdown', 'rawHtml'],
         waitFor: 3000,
         timeout: 30000
       })

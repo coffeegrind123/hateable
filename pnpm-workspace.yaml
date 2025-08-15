@@ -1,0 +1,5 @@
+packages:
+  - '.'
+  - 'firecrawl-simple/apps/api'
+  - 'firecrawl-simple/apps/puppeteer-service-ts'
+  - 'firecrawl-simple/apps/test-suite'

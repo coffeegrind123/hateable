@@ -1,38 +1,82 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createOpenAI } from '@ai-sdk/openai';
-import { generateText } from 'ai';
 
 export async function POST(request: NextRequest) {
   try {
     const { customEndpoint, testMessage } = await request.json();
     
-    if (!customEndpoint?.url || !customEndpoint?.model) {
+    if (!customEndpoint?.url) {
       return NextResponse.json({
         success: false,
-        error: 'Endpoint URL and model are required'
+        error: 'Endpoint URL is required'
       }, { status: 400 });
     }
     
     console.log('[test-endpoint] Testing connection to:', customEndpoint.url);
-    console.log('[test-endpoint] Using model:', customEndpoint.model);
     
-    // Create OpenAI-compatible client with custom endpoint
-    const customOpenAI = createOpenAI({
-      apiKey: customEndpoint.apiKey || 'test',
-      baseURL: customEndpoint.url,
-    });
+    let modelToUse = customEndpoint.model;
     
-    // Make a simple test request
-    const result = await generateText({
-      model: customOpenAI(customEndpoint.model),
-      messages: [
-        {
-          role: 'user',
-          content: testMessage || 'Say "Hello" to test the connection.'
+    // If no model specified, fetch available models and use the first one
+    if (!modelToUse) {
+      try {
+        const modelsUrl = customEndpoint.url.replace(/\/v1\/?$/, '') + '/v1/models';
+        const modelsResponse = await fetch(modelsUrl, {
+          headers: {
+            'Authorization': `Bearer ${customEndpoint.apiKey || 'test'}`,
+            'Content-Type': 'application/json'
+          }
+        });
+        
+        if (modelsResponse.ok) {
+          const data = await modelsResponse.json();
+          const models = data.data?.map((model: any) => model.id) || [];
+          if (models.length > 0) {
+            modelToUse = models[0];
+            console.log('[test-endpoint] Auto-selected first available model:', modelToUse);
+          }
         }
-      ],
-      temperature: 0.1
+      } catch (error) {
+        console.warn('[test-endpoint] Failed to fetch models, will try with default model');
+      }
+    }
+    
+    if (!modelToUse) {
+      return NextResponse.json({
+        success: false,
+        error: 'No model specified and unable to fetch available models'
+      }, { status: 400 });
+    }
+    
+    console.log('[test-endpoint] Using model:', modelToUse);
+    
+    // Make a simple test request using direct HTTP call to bypass AI SDK issues
+    const response = await fetch(`${customEndpoint.url}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${customEndpoint.apiKey || 'test'}`
+      },
+      body: JSON.stringify({
+        model: modelToUse,
+        messages: [
+          {
+            role: 'user',
+            content: testMessage || 'Say "Hello" to test the connection.'
+          }
+        ],
+        temperature: 0.1,
+        stream: false
+      })
     });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+    }
+
+    const data = await response.json();
+    const result = {
+      text: data.choices[0]?.message?.content || 'No response',
+      usage: data.usage
+    };
     
     console.log('[test-endpoint] Test successful, response:', result.text);
     
@@ -40,7 +84,7 @@ export async function POST(request: NextRequest) {
       success: true,
       message: 'Connection test successful',
       response: result.text,
-      model: customEndpoint.model,
+      model: modelToUse,
       endpoint: new URL(customEndpoint.url).hostname
     });
     

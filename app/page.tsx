@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { appConfig } from '@/config/app.config';
 import { Button } from '@/components/ui/button';
@@ -20,7 +20,7 @@ import {
   SiCss3, 
   SiJson 
 } from '@/lib/icons';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import CodeApplicationProgress, { type CodeApplicationState } from '@/components/CodeApplicationProgress';
 
 interface SandboxData {
@@ -42,11 +42,11 @@ interface ChatMessage {
   };
 }
 
-export default function AISandboxPage() {
+function AISandboxPage() {
   const [sandboxData, setSandboxData] = useState<SandboxData | null>(null);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState({ text: 'Not connected', active: false });
-  const [responseArea, setResponseArea] = useState<string[]>([]);
+  const [, setResponseArea] = useState<string[]>([]);
   const [structureContent, setStructureContent] = useState('No sandbox created yet');
   const [promptInput, setPromptInput] = useState('');
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
@@ -68,9 +68,9 @@ export default function AISandboxPage() {
   const [showCustomModel, setShowCustomModel] = useState(false);
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [loadingModels, setLoadingModels] = useState(false);
-  const [urlOverlayVisible, setUrlOverlayVisible] = useState(false);
+  const [, setUrlOverlayVisible] = useState(false);
   const [urlInput, setUrlInput] = useState('');
-  const [urlStatus, setUrlStatus] = useState<string[]>([]);
+  const [, setUrlStatus] = useState<string[]>([]);
   const [showHomeScreen, setShowHomeScreen] = useState(true);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set(['app', 'src', 'src/components']));
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
@@ -80,15 +80,15 @@ export default function AISandboxPage() {
   const [activeTab, setActiveTab] = useState<'generation' | 'preview'>('preview');
   const [showStyleSelector, setShowStyleSelector] = useState(false);
   const [selectedStyle, setSelectedStyle] = useState<string | null>(null);
-  const [showLoadingBackground, setShowLoadingBackground] = useState(false);
+  const [, setShowLoadingBackground] = useState(false);
   const [urlScreenshot, setUrlScreenshot] = useState<string | null>(null);
   const [isCapturingScreenshot, setIsCapturingScreenshot] = useState(false);
   const [screenshotError, setScreenshotError] = useState<string | null>(null);
   const [isPreparingDesign, setIsPreparingDesign] = useState(false);
   const [targetUrl, setTargetUrl] = useState<string>('');
   const [loadingStage, setLoadingStage] = useState<'gathering' | 'planning' | 'generating' | null>(null);
-  const [sandboxFiles, setSandboxFiles] = useState<Record<string, string>>({});
-  const [fileStructure, setFileStructure] = useState<string>('');
+  const [, setSandboxFiles] = useState<Record<string, string>>({});
+  const [, setFileStructure] = useState<string>('');
   
   const [conversationContext, setConversationContext] = useState<{
     scrapedWebsites: Array<{ url: string; content: any; timestamp: Date }>;
@@ -138,37 +138,226 @@ export default function AISandboxPage() {
     lastProcessedPosition: 0
   });
 
+  // Global flag to prevent concurrent sandbox operations
+  const isCreatingSandboxRef = useRef(false);
+
+  // Helper functions that need to be defined before createSandbox
+  const updateStatus = useCallback((text: string, active: boolean) => {
+    setStatus({ text, active });
+  }, []);
+
+  const log = useCallback((message: string, type: 'info' | 'error' | 'command' = 'info') => {
+    setResponseArea(prev => [...prev, `[${type}] ${message}`]);
+  }, []);
+
+  const addChatMessage = useCallback((content: string, type: ChatMessage['type'], metadata?: ChatMessage['metadata']) => {
+    setChatMessages(prev => {
+      // Skip duplicate consecutive system messages
+      if (type === 'system' && prev.length > 0) {
+        const lastMessage = prev[prev.length - 1];
+        if (lastMessage.type === 'system' && lastMessage.content === content) {
+          return prev; // Skip duplicate
+        }
+      }
+      return [...prev, { content, type, timestamp: new Date(), metadata }];
+    });
+  }, []);
+
+  const displayStructure = useCallback((structure: any) => {
+    if (typeof structure === 'object') {
+      setStructureContent(JSON.stringify(structure, null, 2));
+    } else {
+      setStructureContent(structure || 'No structure available');
+    }
+  }, []);
+
+  const fetchSandboxFiles = useCallback(async () => {
+    if (!sandboxData) return;
+    
+    try {
+      const response = await fetch('/api/get-local-sandbox-files', {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success) {
+          setSandboxFiles(data.files || {});
+          setFileStructure(data.structure || '');
+          console.log('[fetchSandboxFiles] Updated file list:', Object.keys(data.files || {}).length, 'files');
+        }
+      }
+    } catch (error) {
+      console.error('[fetchSandboxFiles] Error fetching files:', error);
+    }
+  }, [sandboxData]);
+
+  const createNewSandbox = useCallback(async () => {
+    console.log('[createNewSandbox] Creating fresh sandbox...');
+    
+    // Clear current sandbox state
+    setSandboxData(null);
+    setSandboxFiles({});
+    setFileStructure('');
+    setResponseArea([]);
+    setScreenshotError(null);
+    
+    // Remove sandbox parameter from URL
+    const newParams = new URLSearchParams(searchParams.toString());
+    newParams.delete('sandbox');
+    router.push(`/?${newParams.toString()}`, { scroll: false });
+    
+    // Create new sandbox with force flag
+    await createSandbox(true, undefined, true);
+  }, [searchParams, router]);
+
+  const createSandbox = useCallback(async (fromHomeScreen = false, existingSandboxId?: string, forceNew = false) => {
+    // Prevent concurrent sandbox creation
+    if (isCreatingSandboxRef.current) {
+      console.log('[createSandbox] Another sandbox operation is already in progress, skipping...');
+      return;
+    }
+    
+    // If we already have a sandbox and this isn't restoring a specific one or forcing new, skip
+    if (sandboxData && !existingSandboxId && !forceNew) {
+      console.log('[createSandbox] Sandbox already exists, skipping creation');
+      return;
+    }
+    
+    isCreatingSandboxRef.current = true;
+    console.log('[createSandbox] Starting sandbox creation...', existingSandboxId ? `(restoring ${existingSandboxId})` : '(new)');
+    setLoading(true);
+    setShowLoadingBackground(true);
+    updateStatus(existingSandboxId ? 'Restoring sandbox...' : 'Creating sandbox...', false);
+    setResponseArea([]);
+    setScreenshotError(null);
+    
+    try {
+      const response = await fetch('/api/create-local-sandbox', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(existingSandboxId ? { existingSandboxId: existingSandboxId } : {})
+      });
+      
+      const data = await response.json();
+      console.log('[createSandbox] Response data:', data);
+      
+      if (data.success) {
+        setSandboxData(data);
+        updateStatus('Sandbox active', true);
+        log('Sandbox created successfully!');
+        log(`Sandbox ID: ${data.sandboxId}`);
+        log(`URL: ${data.url}`);
+        
+        // Update URL with sandbox ID
+        const newParams = new URLSearchParams(searchParams.toString());
+        newParams.set('sandbox', data.sandboxId);
+        router.push(`/?${newParams.toString()}`, { scroll: false });
+        
+        // Fade out loading background after sandbox loads
+        setTimeout(() => {
+          setShowLoadingBackground(false);
+        }, 3000);
+        
+        if (data.structure) {
+          displayStructure(data.structure);
+        }
+        
+        // Fetch sandbox files after creation
+        setTimeout(fetchSandboxFiles, 1000);
+        
+        // Restart Vite server to ensure it's running
+        setTimeout(async () => {
+          try {
+            console.log('[createSandbox] Ensuring Vite server is running...');
+            const restartResponse = await fetch('/api/restart-vite', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' }
+            });
+            
+            if (restartResponse.ok) {
+              const restartData = await restartResponse.json();
+              if (restartData.success) {
+                console.log('[createSandbox] Vite server started successfully');
+              }
+            }
+          } catch (error) {
+            console.error('[createSandbox] Error starting Vite server:', error);
+          }
+        }, 2000);
+        
+        // Only add welcome message if not coming from home screen
+        if (!fromHomeScreen) {
+          addChatMessage(`Sandbox created! ID: ${data.sandboxId}. I now have context of your sandbox and can help you build your app. Just ask me to create components and I'll automatically apply them!
+
+Tip: I automatically detect and install npm packages from your code imports (like react-router-dom, axios, etc.)`, 'system');
+        }
+        
+        setTimeout(() => {
+          if (iframeRef.current) {
+            iframeRef.current.src = data.url;
+          }
+        }, 100);
+      } else {
+        throw new Error(data.error || 'Unknown error');
+      }
+    } catch (error: any) {
+      console.error('[createSandbox] Error:', error);
+      updateStatus('Error', false);
+      log(`Failed to create sandbox: ${error.message}`, 'error');
+      addChatMessage(`Failed to create sandbox: ${error.message}`, 'system');
+    } finally {
+      setLoading(false);
+      isCreatingSandboxRef.current = false;
+    }
+  }, [setLoading, setShowLoadingBackground, updateStatus, setResponseArea, setScreenshotError, 
+      setSandboxData, log, searchParams, router, displayStructure, fetchSandboxFiles, 
+      addChatMessage, iframeRef]);
+
+  // Flag to track if initialization has been done
+  const hasInitializedRef = useRef(false);
+
   // Clear old conversation data on component mount and create/restore sandbox
   useEffect(() => {
     const initializePage = async () => {
+      // Only initialize once per page load
+      if (hasInitializedRef.current) {
+        console.log('[home] Already initialized, skipping...');
+        return;
+      }
+      
+      hasInitializedRef.current = true;
+      
       // Clear old conversation
       try {
-        await fetch('/api/conversation-state', {
+        const response = await fetch('/api/conversation-state', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ action: 'clear-old' })
         });
-        console.log('[home] Cleared old conversation data on mount');
+        
+        if (response.ok) {
+          console.log('[home] Cleared old conversation data on mount');
+        } else if (response.status === 400) {
+          // No active conversation to clear - this is fine
+          console.log('[home] No active conversation to clear on mount');
+        } else {
+          console.warn('[home] Failed to clear old conversation:', response.status, response.statusText);
+        }
       } catch (error) {
-        console.error('[ai-sandbox] Failed to clear old conversation:', error);
+        console.error('[home] Error clearing old conversation:', error);
       }
       
       // Check if sandbox ID is in URL
       const sandboxIdParam = searchParams.get('sandbox');
       
       if (sandboxIdParam) {
-        // Try to restore existing sandbox
+        // Restore existing sandbox by calling create-local-sandbox with the existing ID
         console.log('[home] Attempting to restore sandbox:', sandboxIdParam);
-        setLoading(true);
-        try {
-          // For now, just create a new sandbox - you could enhance this to actually restore
-          // the specific sandbox if your backend supports it
-          await createSandbox(true);
-        } catch (error) {
-          console.error('[ai-sandbox] Failed to restore sandbox:', error);
-          // Create new sandbox on error
-          await createSandbox(true);
-        }
+        await createSandbox(true, sandboxIdParam);
       } else {
         // Automatically create new sandbox
         console.log('[home] No sandbox in URL, creating new sandbox automatically...');
@@ -177,7 +366,18 @@ export default function AISandboxPage() {
     };
     
     initializePage();
-  }, []); // Run only on mount
+  }, []); // Run only once on mount
+
+  // Handle URL parameter changes (for sandbox restoration via URL)
+  useEffect(() => {
+    const sandboxIdParam = searchParams.get('sandbox');
+    
+    // Skip if we're already in initialization or already have this sandbox
+    if (hasInitializedRef.current && sandboxIdParam && (!sandboxData || sandboxData.sandboxId !== sandboxIdParam)) {
+      console.log('[home] URL parameter changed, restoring sandbox:', sandboxIdParam);
+      createSandbox(true, sandboxIdParam);
+    }
+  }, [searchParams, sandboxData]);
 
   // Save custom endpoint configuration to localStorage
   useEffect(() => {
@@ -220,6 +420,12 @@ export default function AISandboxPage() {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && showHomeScreen) {
         setHomeScreenFading(true);
+        
+        // Clear sandbox parameter from URL to force fresh start
+        const newParams = new URLSearchParams(searchParams.toString());
+        newParams.delete('sandbox');
+        router.push(`/?${newParams.toString()}`, { scroll: false });
+        
         setTimeout(() => {
           setShowHomeScreen(false);
           setHomeScreenFading(false);
@@ -229,7 +435,7 @@ export default function AISandboxPage() {
     
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [showHomeScreen]);
+  }, [showHomeScreen, searchParams, router]);
   
   // Start capturing screenshot if URL is provided on mount (from home screen)
   useEffect(() => {
@@ -262,28 +468,6 @@ export default function AISandboxPage() {
     }
   }, [chatMessages]);
 
-
-  const updateStatus = (text: string, active: boolean) => {
-    setStatus({ text, active });
-  };
-
-  const log = (message: string, type: 'info' | 'error' | 'command' = 'info') => {
-    setResponseArea(prev => [...prev, `[${type}] ${message}`]);
-  };
-
-  const addChatMessage = (content: string, type: ChatMessage['type'], metadata?: ChatMessage['metadata']) => {
-    setChatMessages(prev => {
-      // Skip duplicate consecutive system messages
-      if (type === 'system' && prev.length > 0) {
-        const lastMessage = prev[prev.length - 1];
-        if (lastMessage.type === 'system' && lastMessage.content === content) {
-          return prev; // Skip duplicate
-        }
-      }
-      return [...prev, { content, type, timestamp: new Date(), metadata }];
-    });
-  };
-  
   const checkAndInstallPackages = async () => {
     if (!sandboxData) {
       addChatMessage('No active sandbox. Create a sandbox first!', 'system');
@@ -294,7 +478,7 @@ export default function AISandboxPage() {
     addChatMessage('Sandbox is ready. Vite configuration is handled by the template.', 'system');
   };
   
-  const handleSurfaceError = (errors: any[]) => {
+  const handleSurfaceError = () => {
     // Function kept for compatibility but Vite errors are now handled by template
     
     // Focus the input
@@ -392,101 +576,6 @@ export default function AISandboxPage() {
       console.error('Failed to check sandbox status:', error);
       setSandboxData(null);
       updateStatus('Error', false);
-    }
-  };
-
-  const createSandbox = async (fromHomeScreen = false) => {
-    console.log('[createSandbox] Starting sandbox creation...');
-    setLoading(true);
-    setShowLoadingBackground(true);
-    updateStatus('Creating sandbox...', false);
-    setResponseArea([]);
-    setScreenshotError(null);
-    
-    try {
-      const response = await fetch('/api/create-local-sandbox', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({})
-      });
-      
-      const data = await response.json();
-      console.log('[createSandbox] Response data:', data);
-      
-      if (data.success) {
-        setSandboxData(data);
-        updateStatus('Sandbox active', true);
-        log('Sandbox created successfully!');
-        log(`Sandbox ID: ${data.sandboxId}`);
-        log(`URL: ${data.url}`);
-        
-        // Update URL with sandbox ID
-        const newParams = new URLSearchParams(searchParams.toString());
-        newParams.set('sandbox', data.sandboxId);
-        router.push(`/?${newParams.toString()}`, { scroll: false });
-        
-        // Fade out loading background after sandbox loads
-        setTimeout(() => {
-          setShowLoadingBackground(false);
-        }, 3000);
-        
-        if (data.structure) {
-          displayStructure(data.structure);
-        }
-        
-        // Fetch sandbox files after creation
-        setTimeout(fetchSandboxFiles, 1000);
-        
-        // Restart Vite server to ensure it's running
-        setTimeout(async () => {
-          try {
-            console.log('[createSandbox] Ensuring Vite server is running...');
-            const restartResponse = await fetch('/api/restart-vite', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' }
-            });
-            
-            if (restartResponse.ok) {
-              const restartData = await restartResponse.json();
-              if (restartData.success) {
-                console.log('[createSandbox] Vite server started successfully');
-              }
-            }
-          } catch (error) {
-            console.error('[createSandbox] Error starting Vite server:', error);
-          }
-        }, 2000);
-        
-        // Only add welcome message if not coming from home screen
-        if (!fromHomeScreen) {
-          addChatMessage(`Sandbox created! ID: ${data.sandboxId}. I now have context of your sandbox and can help you build your app. Just ask me to create components and I'll automatically apply them!
-
-Tip: I automatically detect and install npm packages from your code imports (like react-router-dom, axios, etc.)`, 'system');
-        }
-        
-        setTimeout(() => {
-          if (iframeRef.current) {
-            iframeRef.current.src = data.url;
-          }
-        }, 100);
-      } else {
-        throw new Error(data.error || 'Unknown error');
-      }
-    } catch (error: any) {
-      console.error('[createSandbox] Error:', error);
-      updateStatus('Error', false);
-      log(`Failed to create sandbox: ${error.message}`, 'error');
-      addChatMessage(`Failed to create sandbox: ${error.message}`, 'system');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const displayStructure = (structure: any) => {
-    if (typeof structure === 'object') {
-      setStructureContent(JSON.stringify(structure, null, 2));
-    } else {
-      setStructureContent(structure || 'No structure available');
     }
   };
 
@@ -636,7 +725,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                   }
                   break;
               }
-            } catch (e) {
+            } catch (_e) {
               // Ignore parse errors
             }
           }
@@ -857,7 +946,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                     console.log('[applyGeneratedCode] Iframe loaded successfully');
                     return;
                   }
-                } catch (e) {
+                } catch (_e) {
                   console.log('[applyGeneratedCode] Cannot access iframe content (CORS), assuming loaded');
                   return;
                 }
@@ -913,30 +1002,6 @@ Tip: I automatically detect and install npm packages from your code imports (lik
         ...prev,
         isEdit: false
       }));
-    }
-  };
-
-  const fetchSandboxFiles = async () => {
-    if (!sandboxData) return;
-    
-    try {
-      const response = await fetch('/api/get-local-sandbox-files', {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        }
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        if (data.success) {
-          setSandboxFiles(data.files || {});
-          setFileStructure(data.structure || '');
-          console.log('[fetchSandboxFiles] Updated file list:', Object.keys(data.files || {}).length, 'files');
-        }
-      }
-    } catch (error) {
-      console.error('[fetchSandboxFiles] Error fetching files:', error);
     }
   };
   
@@ -998,8 +1063,8 @@ Tip: I automatically detect and install npm packages from your code imports (lik
         <div className="absolute inset-0 flex overflow-hidden">
           {/* File Explorer - Hide during edits */}
           {!generationProgress.isEdit && (
-            <div className="w-[250px] border-r border-gray-200 bg-white flex flex-col flex-shrink-0">
-            <div className="p-3 bg-gray-100 text-gray-900 flex items-center justify-between">
+            <div className="w-[250px] border-r border-gray-700 bg-gray-900 flex flex-col flex-shrink-0">
+            <div className="p-3 bg-gray-800 text-gray-100 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <BsFolderFill className="w-4 h-4" />
                 <span className="text-sm font-medium">Explorer</span>
@@ -1011,20 +1076,20 @@ Tip: I automatically detect and install npm packages from your code imports (lik
               <div className="text-sm">
                 {/* Root app folder */}
                 <div 
-                  className="flex items-center gap-1 py-1 px-2 hover:bg-gray-100 rounded cursor-pointer text-gray-700"
+                  className="flex items-center gap-1 py-1 px-2 hover:bg-gray-800 rounded cursor-pointer text-gray-300"
                   onClick={() => toggleFolder('app')}
                 >
                   {expandedFolders.has('app') ? (
-                    <FiChevronDown className="w-4 h-4 text-gray-600" />
+                    <FiChevronDown className="w-4 h-4 text-gray-400" />
                   ) : (
-                    <FiChevronRight className="w-4 h-4 text-gray-600" />
+                    <FiChevronRight className="w-4 h-4 text-gray-400" />
                   )}
                   {expandedFolders.has('app') ? (
-                    <BsFolder2Open className="w-4 h-4 text-blue-500" />
+                    <BsFolder2Open className="w-4 h-4 text-blue-400" />
                   ) : (
-                    <BsFolderFill className="w-4 h-4 text-blue-500" />
+                    <BsFolderFill className="w-4 h-4 text-blue-400" />
                   )}
-                  <span className="font-medium text-gray-800">app</span>
+                  <span className="font-medium text-gray-200">app</span>
                 </div>
                 
                 {expandedFolders.has('app') && (
@@ -1057,20 +1122,20 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                         <div key={dir} className="mb-1">
                           {dir && (
                             <div 
-                              className="flex items-center gap-1 py-1 px-2 hover:bg-gray-100 rounded cursor-pointer text-gray-700"
+                              className="flex items-center gap-1 py-1 px-2 hover:bg-gray-800 rounded cursor-pointer text-gray-300"
                               onClick={() => toggleFolder(dir)}
                             >
                               {expandedFolders.has(dir) ? (
-                                <FiChevronDown className="w-4 h-4 text-gray-600" />
+                                <FiChevronDown className="w-4 h-4 text-gray-400" />
                               ) : (
-                                <FiChevronRight className="w-4 h-4 text-gray-600" />
+                                <FiChevronRight className="w-4 h-4 text-gray-400" />
                               )}
                               {expandedFolders.has(dir) ? (
                                 <BsFolder2Open className="w-4 h-4 text-yellow-600" />
                               ) : (
                                 <BsFolderFill className="w-4 h-4 text-yellow-600" />
                               )}
-                              <span className="text-gray-700">{dir.split('/').pop()}</span>
+                              <span className="text-gray-300">{dir.split('/').pop()}</span>
                             </div>
                           )}
                           {(!dir || expandedFolders.has(dir)) && (
@@ -1085,7 +1150,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                                     className={`flex items-center gap-2 py-1 px-2 rounded cursor-pointer transition-all ${
                                       isSelected 
                                         ? 'bg-blue-500 text-white' 
-                                        : 'text-gray-700 hover:bg-gray-100'
+                                        : 'text-gray-300 hover:bg-gray-800'
                                     }`}
                                     onClick={() => handleFileClick(fullPath)}
                                   >
@@ -1094,7 +1159,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                                       {fileInfo.name}
                                       {fileInfo.edited && (
                                         <span className={`text-[10px] px-1 rounded ${
-                                          isSelected ? 'bg-blue-400' : 'bg-orange-500 text-white'
+                                          isSelected ? 'bg-blue-400' : 'bg-red-700 text-white'
                                         }`}>✓</span>
                                       )}
                                     </span>
@@ -1149,7 +1214,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                 {/* Show selected file if one is selected */}
                 {selectedFile ? (
                   <div className="animate-in fade-in slide-in-from-top-2 duration-300">
-                    <div className="bg-black border border-gray-200 rounded-lg overflow-hidden shadow-sm">
+                    <div className="bg-gray-900 border border-gray-600 rounded-lg overflow-hidden shadow-sm">
                       <div className="px-4 py-2 bg-[#36322F] text-white flex items-center justify-between">
                         <div className="flex items-center gap-2">
                           {getFileIcon(selectedFile)}
@@ -1157,7 +1222,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                         </div>
                         <button
                           onClick={() => setSelectedFile(null)}
-                          className="hover:bg-black/20 p-1 rounded transition-colors"
+                          className="hover:bg-gray-900/20 p-1 rounded transition-colors"
                         >
                           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -1208,10 +1273,10 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                       </div>
                     </div>
                   ) : (
-                    <div className="bg-black border border-gray-200 rounded-lg overflow-hidden">
-                      <div className="px-4 py-2 bg-gray-100 text-gray-900 flex items-center justify-between">
+                    <div className="bg-gray-900 border border-gray-600 rounded-lg overflow-hidden">
+                      <div className="px-4 py-2 bg-gray-700 text-gray-100 flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                          <div className="w-3 h-3 border-2 border-orange-500 border-t-transparent rounded-full animate-spin" />
+                          <div className="w-3 h-3 border-2 border-red-9000 border-t-transparent rounded-full animate-spin" />
                           <span className="font-mono text-sm">Streaming code...</span>
                         </div>
                       </div>
@@ -1229,7 +1294,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                         >
                           {generationProgress.streamedCode || 'Starting code generation...'}
                         </SyntaxHighlighter>
-                        <span className="inline-block w-2 h-4 bg-orange-400 ml-1 animate-pulse" />
+                        <span className="inline-block w-2 h-4 bg-red-500 ml-1 animate-pulse" />
                       </div>
                     </div>
                   )
@@ -1237,7 +1302,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                   <div className="space-y-4">
                     {/* Show current file being generated */}
                     {generationProgress.currentFile && (
-                      <div className="bg-black border-2 border-gray-400 rounded-lg overflow-hidden shadow-sm">
+                      <div className="bg-gray-900 border-2 border-gray-400 rounded-lg overflow-hidden shadow-sm">
                         <div className="px-4 py-2 bg-[#36322F] text-white flex items-center justify-between">
                           <div className="flex items-center gap-2">
                             <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
@@ -1246,7 +1311,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                               generationProgress.currentFile.type === 'css' ? 'bg-blue-600 text-white' :
                               generationProgress.currentFile.type === 'javascript' ? 'bg-yellow-600 text-white' :
                               generationProgress.currentFile.type === 'json' ? 'bg-green-600 text-white' :
-                              'bg-gray-200 text-gray-700'
+                              'bg-gray-200 text-gray-300'
                             }`}>
                               {generationProgress.currentFile.type === 'javascript' ? 'JSX' : generationProgress.currentFile.type.toUpperCase()}
                             </span>
@@ -1271,14 +1336,14 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                           >
                             {generationProgress.currentFile.content}
                           </SyntaxHighlighter>
-                          <span className="inline-block w-2 h-3 bg-orange-400 ml-4 mb-4 animate-pulse" />
+                          <span className="inline-block w-2 h-3 bg-red-500 ml-4 mb-4 animate-pulse" />
                         </div>
                       </div>
                     )}
                     
                     {/* Show completed files */}
                     {generationProgress.files.map((file, idx) => (
-                      <div key={idx} className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+                      <div key={idx} className="bg-gray-800 border border-gray-600 rounded-lg overflow-hidden">
                         <div className="px-4 py-2 bg-[#36322F] text-white flex items-center justify-between">
                           <div className="flex items-center gap-2">
                             <span className="text-green-500">✓</span>
@@ -1288,7 +1353,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                             file.type === 'css' ? 'bg-blue-600 text-white' :
                             file.type === 'javascript' ? 'bg-yellow-600 text-white' :
                             file.type === 'json' ? 'bg-green-600 text-white' :
-                            'bg-gray-200 text-gray-700'
+                            'bg-gray-200 text-gray-300'
                           }`}>
                             {file.type === 'javascript' ? 'JSX' : file.type.toUpperCase()}
                           </span>
@@ -1319,7 +1384,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                     
                     {/* Show remaining raw stream if there's content after the last file */}
                     {!generationProgress.currentFile && generationProgress.streamedCode.length > 0 && (
-                      <div className="bg-black border border-gray-200 rounded-lg overflow-hidden">
+                      <div className="bg-gray-900 border border-gray-600 rounded-lg overflow-hidden">
                         <div className="px-4 py-2 bg-[#36322F] text-white flex items-center justify-between">
                           <div className="flex items-center gap-2">
                             <div className="w-3 h-3 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" />
@@ -1365,7 +1430,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
               <div className="mx-6 mb-6">
                 <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
                   <div 
-                    className="h-full bg-gradient-to-r from-orange-500 to-orange-400 transition-all duration-300"
+                    className="h-full bg-gradient-to-r from-red-9000 to-red-500 transition-all duration-300"
                     style={{
                       width: `${(generationProgress.currentComponent / Math.max(generationProgress.components.length, 1)) * 100}%`
                     }}
@@ -1380,16 +1445,16 @@ Tip: I automatically detect and install npm packages from your code imports (lik
       // Show screenshot when we have one and (loading OR generating OR no sandbox yet)
       if (urlScreenshot && (loading || generationProgress.isGenerating || !sandboxData?.url || isPreparingDesign)) {
         return (
-          <div className="relative w-full h-full bg-gray-100">
+          <div className="relative w-full h-full bg-gray-700">
             <img 
               src={urlScreenshot} 
               alt="Website preview" 
               className="w-full h-full object-contain"
             />
             {(generationProgress.isGenerating || isPreparingDesign) && (
-              <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
-                <div className="text-center bg-black/70 rounded-lg p-6 backdrop-blur-sm">
-                  <div className="w-12 h-12 border-3 border-gray-300 border-t-white rounded-full animate-spin mx-auto mb-3" />
+              <div className="absolute inset-0 bg-gray-900/40 flex items-center justify-center">
+                <div className="text-center bg-gray-900/70 rounded-lg p-6 backdrop-blur-sm">
+                  <div className="w-12 h-12 border-3 border-gray-600 border-t-white rounded-full animate-spin mx-auto mb-3" />
                   <p className="text-white text-sm font-medium">
                     {generationProgress.isGenerating ? 'Generating code...' : `Preparing your design for ${targetUrl}...`}
                   </p>
@@ -1404,17 +1469,17 @@ Tip: I automatically detect and install npm packages from your code imports (lik
       // Don't show loading overlay for edits
       if (loadingStage || (generationProgress.isGenerating && !generationProgress.isEdit)) {
         return (
-          <div className="relative w-full h-full bg-gray-50 flex items-center justify-center">
+          <div className="relative w-full h-full bg-gray-800 flex items-center justify-center">
             <div className="text-center">
               <div className="mb-8">
-                <div className="w-16 h-16 border-4 border-orange-200 border-t-orange-500 rounded-full animate-spin mx-auto"></div>
+                <div className="w-16 h-16 border-4 border-red-700 border-t-red-9000 rounded-full animate-spin mx-auto"></div>
               </div>
-              <h3 className="text-xl font-semibold text-gray-800 mb-2">
+              <h3 className="text-xl font-semibold text-gray-200 mb-2">
                 {loadingStage === 'gathering' && 'Gathering website information...'}
                 {loadingStage === 'planning' && 'Planning your design...'}
                 {(loadingStage === 'generating' || generationProgress.isGenerating) && 'Generating your application...'}
               </h3>
-              <p className="text-gray-600 text-sm">
+              <p className="text-gray-400 text-sm">
                 {loadingStage === 'gathering' && 'Analyzing the website structure and content'}
                 {loadingStage === 'planning' && 'Creating the optimal React component architecture'}
                 {(loadingStage === 'generating' || generationProgress.isGenerating) && 'Writing clean, modern code for your app'}
@@ -1445,7 +1510,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                   iframeRef.current.src = newSrc;
                 }
               }}
-              className="absolute bottom-4 right-4 bg-white/90 hover:bg-white text-gray-700 p-2 rounded-lg shadow-lg transition-all duration-200 hover:scale-105"
+              className="absolute bottom-4 right-4 bg-gray-800/90 hover:bg-gray-800 text-gray-300 p-2 rounded-lg shadow-lg transition-all duration-200 hover:scale-105"
               title="Refresh sandbox"
             >
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1470,19 +1535,19 @@ Tip: I automatically detect and install npm packages from your code imports (lik
       
       // Default state when no sandbox and no screenshot
       return (
-        <div className="flex items-center justify-center h-full bg-gray-50 text-gray-600 text-lg">
+        <div className="flex items-center justify-center h-full bg-gray-800 text-gray-400 text-lg">
           {screenshotError ? (
             <div className="text-center">
               <p className="mb-2">Failed to capture screenshot</p>
-              <p className="text-sm text-gray-500">{screenshotError}</p>
+              <p className="text-sm text-gray-400">{screenshotError}</p>
             </div>
           ) : sandboxData ? (
-            <div className="text-gray-500">
-              <div className="w-8 h-8 border-2 border-gray-300 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+            <div className="text-gray-400">
+              <div className="w-8 h-8 border-2 border-gray-600 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
               <p className="text-sm">Loading preview...</p>
             </div>
           ) : (
-            <div className="text-gray-500 text-center">
+            <div className="text-gray-400 text-center">
               <p className="text-sm">Start chatting to create your first app</p>
             </div>
           )}
@@ -1521,10 +1586,17 @@ Tip: I automatically detect and install npm packages from your code imports (lik
     
     if (!sandboxData) {
       sandboxCreating = true;
-      addChatMessage('Creating sandbox while I plan your app...', 'system');
-      sandboxPromise = createSandbox(true).catch((error: any) => {
-        addChatMessage(`Failed to create sandbox: ${error.message}`, 'system');
-        throw error;
+      addChatMessage('Waiting for sandbox to be ready...', 'system');
+      sandboxPromise = new Promise((resolve) => {
+        const checkSandbox = () => {
+          if (global.sandboxData) {
+            setSandboxData(global.sandboxData);
+            resolve();
+          } else {
+            setTimeout(checkSandbox, 100);
+          }
+        };
+        checkSandbox();
       });
     }
     
@@ -1846,6 +1918,10 @@ Tip: I automatically detect and install npm packages from your code imports (lik
         // Don't show the Generated Code panel by default
         // setLeftPanelVisible(true);
         
+        // Apply the generated code to the sandbox
+        console.log('[generate-code] Applying generated code to sandbox...');
+        await applyGeneratedCode(generatedCode, isEdit);
+        
         // Wait for sandbox creation if it's still in progress
         if (sandboxPromise) {
           addChatMessage('Waiting for sandbox to be ready...', 'system');
@@ -1997,13 +2073,13 @@ Tip: I automatically detect and install npm packages from your code imports (lik
     if (ext === 'jsx' || ext === 'js') {
       return <SiJavascript className="w-4 h-4 text-yellow-500" />;
     } else if (ext === 'tsx' || ext === 'ts') {
-      return <SiReact className="w-4 h-4 text-blue-500" />;
+      return <SiReact className="w-4 h-4 text-blue-400" />;
     } else if (ext === 'css') {
-      return <SiCss3 className="w-4 h-4 text-blue-500" />;
+      return <SiCss3 className="w-4 h-4 text-blue-400" />;
     } else if (ext === 'json') {
-      return <SiJson className="w-4 h-4 text-gray-600" />;
+      return <SiJson className="w-4 h-4 text-gray-400" />;
     } else {
-      return <FiFile className="w-4 h-4 text-gray-600" />;
+      return <FiFile className="w-4 h-4 text-gray-400" />;
     }
   };
 
@@ -2072,11 +2148,21 @@ Tip: I automatically detect and install npm packages from your code imports (lik
         currentProject: `Clone of ${url}`
       }));
       
-      // Start sandbox creation in parallel with code generation
+      // Wait for sandbox to be ready
       let sandboxPromise: Promise<void> | null = null;
       if (!sandboxData) {
-        addChatMessage('Creating sandbox while generating your React app...', 'system');
-        sandboxPromise = createSandbox(true);
+        addChatMessage('Waiting for sandbox to be ready...', 'system');
+        sandboxPromise = new Promise((resolve) => {
+          const checkSandbox = () => {
+            if (global.sandboxData) {
+              setSandboxData(global.sandboxData);
+              resolve();
+            } else {
+              setTimeout(checkSandbox, 100);
+            }
+          };
+          checkSandbox();
+        });
       }
       
       addChatMessage('Analyzing and generating React recreation...', 'system');
@@ -2389,8 +2475,18 @@ Focus on the key sections and content, making it clean and modern while preservi
     const cleanUrl = displayUrl.replace(/^https?:\/\//i, '');
     addChatMessage(`Starting to clone ${cleanUrl}...`, 'system');
     
-    // Start creating sandbox and capturing screenshot immediately in parallel
-    const sandboxPromise = !sandboxData ? createSandbox(true) : Promise.resolve();
+    // Wait for sandbox to be ready
+    const sandboxPromise = !sandboxData ? new Promise<void>((resolve) => {
+      const checkSandbox = () => {
+        if (global.sandboxData) {
+          setSandboxData(global.sandboxData);
+          resolve();
+        } else {
+          setTimeout(checkSandbox, 100);
+        }
+      };
+      checkSandbox();
+    }) : Promise.resolve();
     
     // Only capture screenshot if we don't already have a sandbox (first generation)
     // After sandbox is set up, skip the screenshot phase for faster generation
@@ -2767,24 +2863,24 @@ Focus on the key sections and content, making it clean and modern.`;
       {/* Home Screen Overlay */}
       {showHomeScreen && (
         <div className={`fixed inset-0 z-50 transition-opacity duration-500 ${homeScreenFading ? 'opacity-0' : 'opacity-100'}`}>
-          {/* Simple Sun Gradient Background */}
-          <div className="absolute inset-0 bg-white overflow-hidden">
-            {/* Main Sun - Pulsing */}
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-gradient-radial from-orange-400/50 via-orange-300/30 to-transparent rounded-full blur-[80px] animate-[sunPulse_4s_ease-in-out_infinite]" />
+          {/* Dark Angry Gradient Background */}
+          <div className="absolute inset-0 bg-gray-900 overflow-hidden">
+            {/* Main Angry Core - Pulsing */}
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-gradient-radial from-red-600/50 via-red-800/30 to-transparent rounded-full blur-[80px] animate-[angryPulse_4s_ease-in-out_infinite]" />
             
-            {/* Inner Sun Core - Brighter */}
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[400px] h-[400px] bg-gradient-radial from-yellow-300/40 via-orange-400/30 to-transparent rounded-full blur-[40px] animate-[sunPulse_4s_ease-in-out_infinite_0.5s]" />
+            {/* Inner Angry Core - Brighter */}
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[400px] h-[400px] bg-gradient-radial from-red-500/40 via-red-700/30 to-transparent rounded-full blur-[40px] animate-[angryPulse_4s_ease-in-out_infinite_0.5s]" />
             
             {/* Outer Glow - Subtle */}
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[1200px] h-[1200px] bg-gradient-radial from-orange-200/20 to-transparent rounded-full blur-[120px]" />
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[1200px] h-[1200px] bg-gradient-radial from-red-900/20 to-transparent rounded-full blur-[120px]" />
             
             {/* Giant Glowing Orb - Center Bottom */}
             <div className="absolute bottom-0 left-1/2 w-[800px] h-[800px] animate-[orbShrink_3s_ease-out_forwards]" style={{ transform: 'translateX(-50%) translateY(45%)' }}>
               <div className="relative w-full h-full">
-                <div className="absolute inset-0 bg-orange-600 rounded-full blur-[100px] opacity-30 animate-pulse"></div>
-                <div className="absolute inset-16 bg-orange-500 rounded-full blur-[80px] opacity-40 animate-pulse" style={{ animationDelay: '0.3s' }}></div>
-                <div className="absolute inset-32 bg-orange-400 rounded-full blur-[60px] opacity-50 animate-pulse" style={{ animationDelay: '0.6s' }}></div>
-                <div className="absolute inset-48 bg-yellow-300 rounded-full blur-[40px] opacity-60"></div>
+                <div className="absolute inset-0 bg-red-600 rounded-full blur-[100px] opacity-30 animate-pulse"></div>
+                <div className="absolute inset-16 bg-red-700 rounded-full blur-[80px] opacity-40 animate-pulse" style={{ animationDelay: '0.3s' }}></div>
+                <div className="absolute inset-32 bg-red-500 rounded-full blur-[60px] opacity-50 animate-pulse" style={{ animationDelay: '0.6s' }}></div>
+                <div className="absolute inset-48 bg-red-400 rounded-full blur-[40px] opacity-60"></div>
               </div>
             </div>
           </div>
@@ -2794,12 +2890,18 @@ Focus on the key sections and content, making it clean and modern.`;
           <button
             onClick={() => {
               setHomeScreenFading(true);
+              
+              // Clear sandbox parameter from URL to force fresh start
+              const newParams = new URLSearchParams(searchParams.toString());
+              newParams.delete('sandbox');
+              router.push(`/?${newParams.toString()}`, { scroll: false });
+              
               setTimeout(() => {
                 setShowHomeScreen(false);
                 setHomeScreenFading(false);
               }, 500);
             }}
-            className="absolute top-8 right-8 text-gray-500 hover:text-gray-700 transition-all duration-300 opacity-0 hover:opacity-100 bg-white/80 backdrop-blur-sm p-2 rounded-lg shadow-sm"
+            className="absolute top-8 right-8 text-gray-400 hover:text-gray-300 transition-all duration-300 opacity-0 hover:opacity-100 bg-gray-800/80 backdrop-blur-sm p-2 rounded-lg shadow-sm"
             style={{ opacity: 0 }}
             onMouseEnter={(e) => e.currentTarget.style.opacity = '0.8'}
             onMouseLeave={(e) => e.currentTarget.style.opacity = '0'}
@@ -2811,11 +2913,13 @@ Focus on the key sections and content, making it clean and modern.`;
           
           {/* Header */}
           <div className="absolute top-0 left-0 right-0 z-20 px-6 py-4 flex items-center justify-between animate-[fadeIn_0.8s_ease-out]">
-            <img
-              src="/firecrawl-logo-with-fire.webp"
-              alt="Firecrawl"
-              className="h-8 w-auto"
-            />
+            <button 
+              onClick={() => window.location.href = '/'}
+              className="flex items-center gap-2 text-white hover:text-gray-300 transition-colors cursor-pointer"
+            >
+              <span className="text-2xl">😡</span>
+              <span className="text-lg font-semibold">Hateable</span>
+            </button>
             <a 
               href="https://github.com/mendableai/open-lovable" 
               target="_blank" 
@@ -2830,20 +2934,20 @@ Focus on the key sections and content, making it clean and modern.`;
           {/* Main content */}
           <div className="relative z-10 h-full flex items-center justify-center px-4">
             <div className="text-center max-w-4xl min-w-[600px] mx-auto">
-              {/* Firecrawl-style Header */}
+              {/* Hateable-style Header */}
               <div className="text-center">
-                <h1 className="text-[2.5rem] lg:text-[3.8rem] text-center text-[#36322F] font-semibold tracking-tight leading-[0.9] animate-[fadeIn_0.8s_ease-out]">
-                  <span className="hidden md:inline">Open Lovable</span>
-                  <span className="md:hidden">Open Lovable</span>
+                <h1 className="text-[2.5rem] lg:text-[3.8rem] text-center text-gray-100 font-semibold tracking-tight leading-[0.9] animate-[fadeIn_0.8s_ease-out]">
+                  <span className="hidden md:inline">Hateable</span>
+                  <span className="md:hidden">Hateable</span>
                 </h1>
                 <motion.p 
-                  className="text-base lg:text-lg max-w-lg mx-auto mt-2.5 text-zinc-500 text-center text-balance"
+                  className="text-base lg:text-lg max-w-lg mx-auto mt-2.5 text-gray-400 text-center text-balance"
                   animate={{
                     opacity: showStyleSelector ? 0.7 : 1
                   }}
                   transition={{ duration: 0.3, ease: "easeOut" }}
                 >
-                  Re-imagine any website, in seconds.
+                  😡 Angrily re-imagine any website, in seconds.
                 </motion.p>
               </div>
               
@@ -2867,8 +2971,8 @@ Focus on the key sections and content, making it clean and modern.`;
                       }
                     }}
                     placeholder=" "
-                    aria-placeholder="https://firecrawl.dev"
-                    className="h-[3.25rem] w-full resize-none focus-visible:outline-none focus-visible:ring-orange-500 focus-visible:ring-2 rounded-[18px] text-sm text-[#36322F] px-4 pr-12 border-[.75px] border-border bg-white"
+                    aria-placeholder="https://open-hateable.dev"
+                    className="h-[3.25rem] w-full resize-none focus-visible:outline-none focus-visible:ring-red-9000 focus-visible:ring-2 rounded-[18px] text-sm text-gray-100 px-4 pr-12 border-[.75px] border-border bg-gray-800"
                     style={{
                       boxShadow: '0 0 0 1px #e3e1de66, 0 1px 2px #5f4a2e14, 0 4px 6px #5f4a2e0a, 0 40px 40px -24px #684b2514',
                       filter: 'drop-shadow(rgba(249, 224, 184, 0.3) -0.731317px -0.731317px 35.6517px)'
@@ -2882,13 +2986,13 @@ Focus on the key sections and content, making it clean and modern.`;
                     }`}
                   >
                     <span className="text-[#605A57]/50" style={{ fontFamily: 'monospace' }}>
-                      https://firecrawl.dev
+                      https://open-hateable.dev
                     </span>
                   </div>
                   <button
                     type="submit"
                     disabled={!homeUrlInput.trim()}
-                    className="absolute top-1/2 transform -translate-y-1/2 right-2 flex h-10 items-center justify-center rounded-md px-3 text-sm font-medium text-zinc-500 hover:text-zinc-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-950 focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    className="absolute top-1/2 transform -translate-y-1/2 right-2 flex h-10 items-center justify-center rounded-md px-3 text-sm font-medium text-gray-400 hover:text-zinc-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-950 focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                     title={selectedStyle ? `Clone with ${selectedStyle} Style` : 'Clone Website'}
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
@@ -2904,8 +3008,8 @@ Focus on the key sections and content, making it clean and modern.`;
                       <div className={`transition-all duration-500 ease-out transform ${
                         showStyleSelector ? 'translate-y-0 opacity-100' : '-translate-y-4 opacity-0'
                       }`}>
-                    <div className="bg-white/80 backdrop-blur-sm border border-gray-200 rounded-xl p-4 shadow-sm">
-                      <p className="text-sm text-gray-600 mb-3 font-medium">How do you want your site to look?</p>
+                    <div className="bg-gray-800/80 backdrop-blur-sm border border-gray-600 rounded-xl p-4 shadow-sm">
+                      <p className="text-sm text-gray-400 mb-3 font-medium">How do you want your site to look?</p>
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                         {[
                           { name: 'Neobrutalist', description: 'Bold colors, thick borders' },
@@ -2948,12 +3052,12 @@ Focus on the key sections and content, making it clean and modern.`;
                             }}
                             className={`p-3 rounded-lg border transition-all ${
                               selectedStyle === style.name
-                                ? 'border-orange-400 bg-orange-50 text-gray-900 shadow-sm'
-                                : 'border-gray-200 bg-white hover:border-orange-200 hover:bg-orange-50/50 text-gray-700'
+                                ? 'border-red-500 bg-red-900 text-gray-100 shadow-sm'
+                                : 'border-gray-600 bg-gray-800 hover:border-red-700 hover:bg-red-900/50 text-gray-300'
                             }`}
                           >
                             <div className="text-sm font-medium">{style.name}</div>
-                            <div className="text-xs text-gray-500 mt-1">{style.description}</div>
+                            <div className="text-xs text-gray-400 mt-1">{style.description}</div>
                           </button>
                         ))}
                       </div>
@@ -2986,7 +3090,7 @@ Focus on the key sections and content, making it clean and modern.`;
                             }
                           }}
                           placeholder="Add more details: specific features, color preferences..."
-                          className="w-full px-4 py-2 text-sm bg-white border border-gray-200 rounded-lg text-gray-900 placeholder-gray-500 focus:outline-none focus:border-orange-300 focus:ring-2 focus:ring-orange-100 transition-all duration-200"
+                          className="w-full px-4 py-2 text-sm bg-gray-800 border border-gray-600 rounded-lg text-gray-100 placeholder-gray-400 focus:outline-none focus:border-red-600 focus:ring-2 focus:ring-red-900 transition-all duration-200"
                         />
                       </div>
                     </div>
@@ -2999,7 +3103,7 @@ Focus on the key sections and content, making it clean and modern.`;
               <div className="mt-6 flex flex-col items-center justify-center animate-[fadeIn_1s_ease-out] gap-3">
                 <button
                   onClick={() => setShowEndpointConfig(!showEndpointConfig)}
-                  className="px-4 py-2 text-sm bg-white border border-gray-300 rounded-lg hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[#36322F] focus:border-transparent transition-colors"
+                  className="px-4 py-2 text-sm bg-gray-800 border border-gray-600 rounded-lg hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent transition-colors"
                   style={{
                     boxShadow: '0 0 0 1px #e3e1de66, 0 1px 2px #5f4a2e14'
                   }}
@@ -3008,11 +3112,11 @@ Focus on the key sections and content, making it clean and modern.`;
                 </button>
                 
                 {showEndpointConfig && (
-                  <div className="w-full max-w-md p-4 bg-white border border-gray-200 rounded-lg shadow-lg">
+                  <div className="w-full max-w-md p-4 bg-gray-800 border border-gray-600 rounded-lg shadow-lg">
                     <div className="space-y-3">
                       {/* Quick Setup Presets */}
                       <div>
-                        <label className="block text-xs font-medium text-gray-700 mb-2">
+                        <label className="block text-xs font-medium text-gray-300 mb-2">
                           Quick Setup
                         </label>
                         <div className="flex flex-wrap gap-2 mb-3">
@@ -3056,14 +3160,14 @@ Focus on the key sections and content, making it clean and modern.`;
                               apiKey: '',
                               model: 'gpt-3.5-turbo'
                             })}
-                            className="px-2 py-1 text-xs bg-orange-100 text-orange-700 rounded hover:bg-orange-200"
+                            className="px-2 py-1 text-xs bg-red-900 text-red-300 rounded hover:bg-red-800"
                           >
                             OpenAI
                           </button>
                         </div>
                       </div>
                       <div>
-                        <label className="block text-xs font-medium text-gray-700 mb-1">
+                        <label className="block text-xs font-medium text-gray-300 mb-1">
                           API Endpoint URL
                         </label>
                         <input
@@ -3071,12 +3175,12 @@ Focus on the key sections and content, making it clean and modern.`;
                           value={customEndpoint.url}
                           onChange={(e) => setCustomEndpoint((prev: { url: string; apiKey: string; model: string }) => ({ ...prev, url: e.target.value }))}
                           placeholder="http://localhost:8081/v1"
-                          className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#36322F] focus:border-transparent"
+                          className="w-full px-3 py-2 text-sm border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent"
                         />
                       </div>
                       
                       <div>
-                        <label className="block text-xs font-medium text-gray-700 mb-1">
+                        <label className="block text-xs font-medium text-gray-300 mb-1">
                           API Key
                         </label>
                         <input
@@ -3084,12 +3188,12 @@ Focus on the key sections and content, making it clean and modern.`;
                           value={customEndpoint.apiKey}
                           onChange={(e) => setCustomEndpoint((prev: { url: string; apiKey: string; model: string }) => ({ ...prev, apiKey: e.target.value }))}
                           placeholder="your-api-key"
-                          className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#36322F] focus:border-transparent"
+                          className="w-full px-3 py-2 text-sm border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent"
                         />
                       </div>
                       
                       <div>
-                        <label className="block text-xs font-medium text-gray-700 mb-1">
+                        <label className="block text-xs font-medium text-gray-300 mb-1">
                           Model Name
                         </label>
                         <div className="space-y-2">
@@ -3100,7 +3204,7 @@ Focus on the key sections and content, making it clean and modern.`;
                                 value={customEndpoint.model}
                                 onChange={(e) => setCustomEndpoint((prev: { url: string; apiKey: string; model: string }) => ({ ...prev, model: e.target.value }))}
                                 placeholder="Enter custom model name"
-                                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#36322F] focus:border-transparent"
+                                className="w-full px-3 py-2 text-sm border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent"
                               />
                               <button
                                 type="button"
@@ -3122,7 +3226,7 @@ Focus on the key sections and content, making it clean and modern.`;
                                       setCustomEndpoint((prev: { url: string; apiKey: string; model: string }) => ({ ...prev, model: e.target.value }));
                                     }
                                   }}
-                                  className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#36322F] focus:border-transparent"
+                                  className="flex-1 px-3 py-2 text-sm border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent"
                                   disabled={loadingModels}
                                 >
                                   {availableModels.length > 0 ? (
@@ -3149,13 +3253,13 @@ Focus on the key sections and content, making it clean and modern.`;
                                   type="button"
                                   onClick={fetchAvailableModels}
                                   disabled={!customEndpoint.url || loadingModels}
-                                  className="px-3 py-2 text-xs bg-blue-100 text-blue-700 rounded hover:bg-blue-200 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
+                                  className="px-3 py-2 text-xs bg-blue-100 text-blue-700 rounded hover:bg-blue-200 disabled:bg-gray-700 disabled:text-gray-400 disabled:cursor-not-allowed"
                                   title="Fetch available models from endpoint"
                                 >
                                   {loadingModels ? '⏳' : '🔄'}
                                 </button>
                               </div>
-                              <div className="text-xs text-gray-500">
+                              <div className="text-xs text-gray-400">
                                 {availableModels.length > 0 ? (
                                   `Found ${availableModels.length} model(s) from endpoint`
                                 ) : customEndpoint.url ? (
@@ -3177,7 +3281,7 @@ Focus on the key sections and content, making it clean and modern.`;
                       </div>
                       
                       {/* Test Connection Button */}
-                      <div className="pt-2 border-t border-gray-200">
+                      <div className="pt-2 border-t border-gray-600">
                         <button
                           type="button"
                           onClick={async () => {
@@ -3197,11 +3301,11 @@ Focus on the key sections and content, making it clean and modern.`;
                               } else {
                                 alert('❌ Connection test failed. Check your settings.');
                               }
-                            } catch (error) {
+                            } catch (_error) {
                               alert('❌ Connection test failed. Check your settings.');
                             }
                           }}
-                          className="w-full px-3 py-2 text-sm bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-[#36322F]"
+                          className="w-full px-3 py-2 text-sm bg-gray-700 text-gray-300 rounded-md hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-red-500"
                         >
                           🔍 Test Connection
                         </button>
@@ -3217,20 +3321,16 @@ Focus on the key sections and content, making it clean and modern.`;
       
       <div className="bg-card px-4 py-4 border-b border-border flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <img
-            src="/firecrawl-logo-with-fire.webp"
-            alt="Firecrawl"
-            className="h-8 w-auto"
-          />
+          <span className="text-2xl">😡</span>
         </div>
         <div className="flex items-center gap-2">
           {/* Endpoint Info - Left side */}
-          <div className="text-sm text-gray-600 px-2 py-1 bg-gray-50 rounded border border-gray-200">
+          <div className="text-sm text-gray-400 px-2 py-1 bg-gray-800 rounded border border-gray-600">
             {customEndpoint.model} @ {new URL(customEndpoint.url).hostname}
           </div>
           <Button 
             variant="code"
-            onClick={() => createSandbox()}
+            onClick={() => createNewSandbox()}
             size="sm"
             title="Create new sandbox"
           >
@@ -3261,8 +3361,8 @@ Focus on the key sections and content, making it clean and modern.`;
             </svg>
           </Button>
           <div className="inline-flex items-center gap-2 bg-[#36322F] text-white px-3 py-1.5 rounded-[10px] text-sm font-medium [box-shadow:inset_0px_-2px_0px_0px_#171310,_0px_1px_6px_0px_rgba(58,_33,_8,_58%)]">
-            <span id="status-text">{status.text}</span>
-            <div className={`w-2 h-2 rounded-full ${status.active ? 'bg-green-500' : 'bg-gray-500'}`} />
+            <span id="status-text" className="leading-none">{status.text}</span>
+            <div className={`w-2 h-2 rounded-full flex-shrink-0 ${status.active ? 'bg-green-500' : 'bg-gray-800'}`} />
           </div>
         </div>
       </div>
@@ -3294,7 +3394,7 @@ Focus on the key sections and content, making it clean and modern.`;
                         href={sourceURL} 
                         target="_blank" 
                         rel="noopener noreferrer"
-                        className="text-black hover:text-gray-700 truncate max-w-[250px]"
+                        className="text-gray-100 hover:text-gray-300 truncate max-w-[250px]"
                         title={sourceURL}
                       >
                         {siteName}
@@ -3314,7 +3414,7 @@ Focus on the key sections and content, making it clean and modern.`;
                                          msg.content.includes('Code generated!');
               
               // Get the files from metadata if this is a completion message
-              const completedFiles = msg.metadata?.appliedFiles || [];
+              const _completedFiles = msg.metadata?.appliedFiles || [];
               
               return (
                 <div key={idx} className="block">
@@ -3322,7 +3422,7 @@ Focus on the key sections and content, making it clean and modern.`;
                     <div className="block">
                       <div className={`block rounded-[10px] px-4 py-2 ${
                         msg.type === 'user' ? 'bg-[#36322F] text-white ml-auto max-w-[80%]' :
-                        msg.type === 'ai' ? 'bg-gray-100 text-gray-900 mr-auto max-w-[80%]' :
+                        msg.type === 'ai' ? 'bg-gray-700 text-gray-100 mr-auto max-w-[80%]' :
                         msg.type === 'system' ? 'bg-[#36322F] text-white text-sm' :
                         msg.type === 'command' ? 'bg-[#36322F] text-white font-mono text-sm' :
                         msg.type === 'error' ? 'bg-red-900 text-red-100 text-sm border border-red-700' :
@@ -3362,8 +3462,8 @@ Focus on the key sections and content, making it clean and modern.`;
                   
                       {/* Show applied files if this is an apply success message */}
                       {msg.metadata?.appliedFiles && msg.metadata.appliedFiles.length > 0 && (
-                    <div className="mt-2 inline-block bg-gray-100 rounded-[10px] p-3">
-                      <div className="text-xs font-medium mb-1 text-gray-700">
+                    <div className="mt-2 inline-block bg-gray-700 rounded-[10px] p-3">
+                      <div className="text-xs font-medium mb-1 text-gray-300">
                         {msg.content.includes('Applied') ? 'Files Updated:' : 'Generated Files:'}
                       </div>
                       <div className="flex flex-wrap items-start gap-1">
@@ -3396,8 +3496,8 @@ Focus on the key sections and content, making it clean and modern.`;
                   
                       {/* Show generated files for completion messages - but only if no appliedFiles already shown */}
                       {isGenerationComplete && generationProgress.files.length > 0 && idx === chatMessages.length - 1 && !msg.metadata?.appliedFiles && !chatMessages.some(m => m.metadata?.appliedFiles) && (
-                    <div className="mt-2 inline-block bg-gray-100 rounded-[10px] p-3">
-                      <div className="text-xs font-medium mb-1 text-gray-700">Generated Files:</div>
+                    <div className="mt-2 inline-block bg-gray-700 rounded-[10px] p-3">
+                      <div className="text-xs font-medium mb-1 text-gray-300">Generated Files:</div>
                       <div className="flex flex-wrap items-start gap-1">
                         {generationProgress.files.map((file, fileIdx) => (
                           <div
@@ -3430,8 +3530,8 @@ Focus on the key sections and content, making it clean and modern.`;
             
             {/* File generation progress - inline display (during generation) */}
             {generationProgress.isGenerating && (
-              <div className="inline-block bg-gray-100 rounded-lg p-3">
-                <div className="text-sm font-medium mb-2 text-gray-700">
+              <div className="inline-block bg-gray-700 rounded-lg p-3">
+                <div className="text-sm font-medium mb-2 text-gray-300">
                   {generationProgress.status}
                 </div>
                 <div className="flex flex-wrap items-start gap-1">
@@ -3466,12 +3566,12 @@ Focus on the key sections and content, making it clean and modern.`;
                     animate={{ opacity: 1, height: 'auto' }}
                     exit={{ opacity: 0, height: 0 }}
                     transition={{ duration: 0.3 }}
-                    className="mt-3 border-t border-gray-300 pt-3"
+                    className="mt-3 border-t border-gray-600 pt-3"
                   >
                     <div className="flex items-center gap-2 mb-2">
                       <div className="flex items-center gap-1">
                         <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-                        <span className="text-xs font-medium text-gray-600">AI Response Stream</span>
+                        <span className="text-xs font-medium text-gray-400">AI Response Stream</span>
                       </div>
                       <div className="flex-1 h-px bg-gradient-to-r from-gray-300 to-transparent" />
                     </div>
@@ -3496,7 +3596,7 @@ Focus on the key sections and content, making it clean and modern.`;
                           return startIndex !== -1 ? lastContent.slice(startIndex) : lastContent;
                         })()}
                       </SyntaxHighlighter>
-                      <span className="inline-block w-2 h-3 bg-orange-400 ml-3 mb-3 animate-pulse" />
+                      <span className="inline-block w-2 h-3 bg-red-500 ml-3 mb-3 animate-pulse" />
                     </div>
                   </motion.div>
                 )}
@@ -3541,7 +3641,7 @@ Focus on the key sections and content, making it clean and modern.`;
                   onClick={() => setActiveTab('generation')}
                   className={`p-2 rounded-md transition-all ${
                     activeTab === 'generation' 
-                      ? 'bg-black text-white' 
+                      ? 'bg-gray-900 text-white' 
                       : 'text-gray-300 hover:text-white hover:bg-gray-700'
                   }`}
                   title="Code"
@@ -3554,7 +3654,7 @@ Focus on the key sections and content, making it clean and modern.`;
                   onClick={() => setActiveTab('preview')}
                   className={`p-2 rounded-md transition-all ${
                     activeTab === 'preview' 
-                      ? 'bg-black text-white' 
+                      ? 'bg-gray-900 text-white' 
                       : 'text-gray-300 hover:text-white hover:bg-gray-700'
                   }`}
                   title="Preview"
@@ -3571,7 +3671,7 @@ Focus on the key sections and content, making it clean and modern.`;
               {activeTab === 'generation' && (generationProgress.isGenerating || generationProgress.files.length > 0) && (
                 <div className="flex items-center gap-3">
                   {!generationProgress.isEdit && (
-                    <div className="text-gray-600 text-sm">
+                    <div className="text-gray-400 text-sm">
                       {generationProgress.files.length} files generated
                     </div>
                   )}
@@ -3583,7 +3683,7 @@ Focus on the key sections and content, making it clean and modern.`;
                       </>
                     ) : (
                       <>
-                        <div className="w-2 h-2 bg-gray-500 rounded-full" />
+                        <div className="w-2 h-2 bg-gray-8000 rounded-full" />
                         COMPLETE
                       </>
                     )}
@@ -3622,5 +3722,13 @@ Focus on the key sections and content, making it clean and modern.`;
 
 
     </div>
+  );
+}
+
+export default function Page() {
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <AISandboxPage />
+    </Suspense>
   );
 }

@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { spawn, exec } from 'child_process';
 import { promises as fs } from 'fs';
 import path from 'path';
@@ -21,9 +21,102 @@ function generateSandboxId(): string {
   return `sandbox_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
 }
 
-export async function POST() {
+export async function POST(request: NextRequest) {
   try {
-    console.log('[create-local-sandbox] Creating local folder sandbox...');
+    // Check if we're restoring an existing sandbox
+    const body = await request.json().catch(() => ({}));
+    const existingSandboxId = body.existingSandboxId;
+    
+    if (existingSandboxId) {
+      console.log('[create-local-sandbox] Restoring existing sandbox:', existingSandboxId);
+      
+      // Check if the sandbox directory exists
+      const existingSandboxPath = path.join(process.cwd(), appConfig.sandbox.baseDir, existingSandboxId);
+      
+      try {
+        const stats = await fs.stat(existingSandboxPath);
+        if (stats.isDirectory()) {
+          // Sandbox exists, start Vite server for it
+          console.log('[create-local-sandbox] Found existing sandbox at:', existingSandboxPath);
+          
+          // Kill existing processes if any
+          if (global.activeSandbox?.viteProcess) {
+            console.log('[create-local-sandbox] Killing existing Vite process...');
+            try {
+              global.activeSandbox.viteProcess.kill('SIGTERM');
+            } catch (e) {
+              console.error('Failed to kill existing Vite process:', e);
+            }
+            global.activeSandbox = null;
+          }
+          
+          // Start Vite dev server for the existing sandbox
+          const viteProcess = spawn('npm', ['run', 'dev'], {
+            cwd: existingSandboxPath,
+            stdio: ['inherit', 'pipe', 'pipe'],
+            env: { ...process.env, FORCE_COLOR: '0' }
+          });
+
+          // Wait for Vite to start
+          await new Promise((resolve) => {
+            const timeout = setTimeout(resolve, appConfig.sandbox.viteStartupDelay);
+            
+            viteProcess.stdout?.on('data', (data) => {
+              const output = data.toString();
+              console.log('[vite restore]', output);
+              if (output.includes('Local:') || output.includes('ready')) {
+                clearTimeout(timeout);
+                resolve(undefined);
+              }
+            });
+            
+            viteProcess.stderr?.on('data', (data) => {
+              console.error('[vite restore error]', data.toString());
+            });
+          });
+          
+          // Restore global sandbox state
+          const sandboxUrl = `http://localhost:${appConfig.sandbox.vitePort}`;
+          
+          global.activeSandbox = {
+            viteProcess,
+            sandboxPath: existingSandboxPath,
+            sandboxId: existingSandboxId
+          };
+          
+          global.sandboxData = {
+            sandboxId: existingSandboxId,
+            url: sandboxUrl,
+            id: existingSandboxId
+          };
+          
+          // Initialize sandbox state
+          global.sandboxState = {
+            fileCache: {
+              files: {},
+              lastSync: Date.now(),
+              sandboxId: existingSandboxId
+            },
+            sandbox: global.activeSandbox,
+            sandboxData: global.sandboxData
+          };
+          
+          console.log('[create-local-sandbox] Existing sandbox restored at:', sandboxUrl);
+          
+          return NextResponse.json({
+            success: true,
+            sandboxId: existingSandboxId,
+            url: sandboxUrl,
+            message: 'Existing sandbox restored and Vite server started'
+          });
+        }
+      } catch (error) {
+        console.warn('[create-local-sandbox] Existing sandbox not found or invalid:', error);
+        // Fall through to create new sandbox
+      }
+    }
+    
+    console.log('[create-local-sandbox] Creating new local folder sandbox...');
     
     // Kill existing processes if any
     if (global.activeSandbox?.viteProcess) {
@@ -89,9 +182,8 @@ export default defineConfig({
     host: '0.0.0.0',
     port: ${appConfig.sandbox.vitePort},
     strictPort: true,
-    hmr: {
-      port: 24678
-    }
+    hmr: false, // Disable HMR in sandbox environment
+    allowedHosts: 'all'
   }
 })`;
 
@@ -202,9 +294,9 @@ body {
     
     // Install dependencies
     try {
-      await execAsync('npm install', { 
+      await execAsync('NODE_ENV=development npm install', { 
         cwd: sandboxPath,
-        timeout: 60000 // 1 minute timeout
+        timeout: 120000 // 2 minute timeout for safety
       });
       console.log('[create-local-sandbox] Dependencies installed successfully');
     } catch (error) {

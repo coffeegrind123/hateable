@@ -1,15 +1,25 @@
 services:
-  # Main Open Lovable application
+  # Main Open Hateable application  
   app:
     build:
       context: .
       dockerfile: Dockerfile
+      target: runner
     ports:
       - "3001:3000"  # Map external port 3001 to internal port 3000
       - "5173:5173"  # Vite dev server port for sandboxes
     environment:
       - NODE_ENV=production
+      - NEXT_TELEMETRY_DISABLED=1
+      - NODE_OPTIONS=--max-old-space-size=4096
       - FIRECRAWL_API_URL=http://firecrawl-api:3002
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/test-endpoint"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     volumes:
       - ./sandboxes:/app/sandboxes  # Mount sandbox directory
       - ./data:/app/data  # Persistent data storage

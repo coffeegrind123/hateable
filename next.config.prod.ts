@@ -8,41 +8,24 @@ const nextConfig: NextConfig = {
   compress: true,
   poweredByHeader: false,
   
-  // ESLint configuration for production builds
+  // Disable linting and type checking during builds to speed up production
   eslint: {
-    // Ignore ESLint errors during production builds
-    ignoreDuringBuilds: process.env.NODE_ENV === 'production',
+    ignoreDuringBuilds: true,
   },
   
-  // TypeScript configuration
   typescript: {
-    // Ignore TypeScript errors during production builds
-    ignoreBuildErrors: process.env.NODE_ENV === 'production',
+    ignoreBuildErrors: true,
   },
   
-  // Server external packages (moved from experimental)
-  serverExternalPackages: ['sharp'],
+  // Minimal experimental features for stability
+  experimental: {
+    serverComponentsExternalPackages: ['sharp'],
+  },
   
   // Production performance optimizations
   images: {
     formats: ['image/avif', 'image/webp'],
     minimumCacheTTL: 60 * 60 * 24 * 30, // 30 days
-    deviceSizes: [640, 750, 828, 1080, 1200, 1920, 2048, 3840],
-    imageSizes: [16, 32, 48, 64, 96, 128, 256, 384],
-  },
-  
-  // Webpack optimizations
-  webpack: (config, { dev, isServer }) => {
-    // Production optimizations
-    if (!dev) {
-      config.optimization = {
-        ...config.optimization,
-        usedExports: true,
-        sideEffects: false,
-      };
-    }
-    
-    return config;
   },
   
   // File tracing for standalone builds
@@ -67,19 +50,6 @@ const nextConfig: NextConfig = {
           {
             key: 'X-XSS-Protection',
             value: '1; mode=block',
-          },
-          {
-            key: 'Referrer-Policy',
-            value: 'origin-when-cross-origin',
-          },
-        ],
-      },
-      {
-        source: '/api/(.*)',
-        headers: [
-          {
-            key: 'Cache-Control',
-            value: 'no-store, max-age=0',
           },
         ],
       },

@@ -24,9 +24,9 @@ export const appConfig = {
   ai: {
     // Default custom endpoint configuration
     defaultEndpoint: {
-      url: 'http://localhost:8081/v1',
+      url: 'http://host.docker.internal:8081/v1',
       apiKey: '',
-      model: 'gpt-3.5-turbo'
+      model: 'qwen3-coder-plus' // First model from available models
     },
     
     // Temperature settings for non-reasoning models
@@ -83,6 +83,12 @@ export const appConfig = {
     
     // Log API responses
     logApiResponses: true,
+    
+    // Automatic error fixing
+    enableAutoFix: true,
+    
+    // Auto-fix delay (milliseconds) - wait before attempting fix
+    autoFixDelay: 3000,
   },
   
   // Package Installation Configuration

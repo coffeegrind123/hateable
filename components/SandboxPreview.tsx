@@ -22,9 +22,9 @@ export default function SandboxPreview({
 
   useEffect(() => {
     if (sandboxId && type !== 'console') {
-      // In production, this would be the actual E2B sandbox URL
-      // Format: https://{sandboxId}-{port}.e2b.dev
-      setPreviewUrl(`https://${sandboxId}-${port}.e2b.dev`);
+      // For local development, use localhost with the specified port
+      // In a cloud environment, this could be dynamically constructed
+      setPreviewUrl(`http://localhost:${port}`);
     }
   }, [sandboxId, port, type]);
 

@@ -92,7 +92,7 @@ export function executeSearchPlan(
                 matchedPattern = pattern;
                 break;
               }
-            } catch (e) {
+            } catch (_e) {
               console.warn(`[file-search] Invalid regex pattern: ${pattern}`);
             }
           }

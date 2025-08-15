@@ -1,0 +1,142 @@
+services:
+  # Main Open Hateable application - Production Configuration
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runner
+    ports:
+      - "3000:3000"  # Production port mapping
+      - "5173:5173"  # Vite dev server port for sandboxes
+    environment:
+      - NODE_ENV=production
+      - NEXT_TELEMETRY_DISABLED=1
+      - NODE_OPTIONS=--max-old-space-size=4096
+      - FIRECRAWL_API_URL=http://firecrawl-api:3002
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/test-endpoint"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    volumes:
+      - ./sandboxes:/app/sandboxes
+      - ./data:/app/data
+    depends_on:
+      firecrawl-api:
+        condition: service_healthy
+    networks:
+      - lovable-network
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '2.0'
+        reservations:
+          memory: 2G
+          cpus: '1.0'
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Self-hosted Firecrawl Simple services with pydoll - Production
+  pydoll-service:
+    build:
+      context: ./firecrawl-simple/apps/pydoll-service
+      dockerfile: Dockerfile
+    environment:
+      - PORT=3003
+      - PROXY_SERVER=${PROXY_SERVER}
+      - PROXY_USERNAME=${PROXY_USERNAME}
+      - PROXY_PASSWORD=${PROXY_PASSWORD}
+    networks:
+      - lovable-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+
+  puppeteer-service:
+    build:
+      context: ./firecrawl-simple/apps/puppeteer-service-ts
+      dockerfile: Dockerfile
+    environment:
+      - PORT=3004
+      - PROXY_SERVER=${PROXY_SERVER}
+      - PROXY_USERNAME=${PROXY_USERNAME}
+      - PROXY_PASSWORD=${PROXY_PASSWORD}
+    networks:
+      - lovable-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3004/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.5'
+
+  firecrawl-api:
+    build:
+      context: ./firecrawl-simple/apps/api
+      dockerfile: Dockerfile
+    ports:
+      - "3002:3002"
+    environment:
+      - NODE_ENV=production
+      - PORT=3002
+      - PUPPETEER_SERVICE_URL=http://puppeteer-service:3004
+      - PYDOLL_SERVICE_URL=http://pydoll-service:3003
+      - BLOCK_MEDIA=${BLOCK_MEDIA:-true}
+      - MAX_CONCURRENCY=${MAX_CONCURRENCY:-10}
+      - TWOCAPTCHA_TOKEN=${TWOCAPTCHA_TOKEN}
+      - NUM_WORKERS_PER_QUEUE=${NUM_WORKERS_PER_QUEUE:-8}
+      - BULL_AUTH_KEY=${BULL_AUTH_KEY:-changeme-secure-key}
+      - TEST_API_KEY=${TEST_API_KEY:-test-key}
+      - LOGGING_LEVEL=${LOGGING_LEVEL:-info}
+      - MAX_RAM=${MAX_RAM:-0.95}
+      - MAX_CPU=${MAX_CPU:-0.95}
+      - SCRAPING_BEE_API_KEY=${SCRAPING_BEE_API_KEY}
+    networks:
+      - lovable-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3002/v1/health"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 60s
+    depends_on:
+      - pydoll-service
+      - puppeteer-service
+    deploy:
+      resources:
+        limits:
+          memory: 3G
+          cpus: '2.0'
+        reservations:
+          memory: 1G
+          cpus: '0.5'
+
+networks:
+  lovable-network:
+    driver: bridge
+
+volumes:
+  data:
+    driver: local
+  sandboxes:
+    driver: local
