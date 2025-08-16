@@ -385,7 +385,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
   }, [customEndpoint]);
 
   // Fetch available models from the endpoint
-  const fetchAvailableModels = async () => {
+  const fetchAvailableModels = useCallback(async () => {
     if (!customEndpoint.url) return;
     
     setLoadingModels(true);
@@ -403,6 +403,16 @@ Tip: I automatically detect and install npm packages from your code imports (lik
         const models = data.data?.map((model: any) => model.id) || [];
         setAvailableModels(models);
         console.log('[fetch-models] Found models:', models);
+        
+        // Automatically set the first available model if no model is set or if current model is not available
+        if (models.length > 0 && (!customEndpoint.model || customEndpoint.model === 'gpt-3.5-turbo' || !models.includes(customEndpoint.model))) {
+          const firstModel = models[0];
+          console.log('[fetch-models] Auto-setting model to:', firstModel);
+          setCustomEndpoint(prev => ({
+            ...prev,
+            model: firstModel
+          }));
+        }
       } else {
         console.error('[fetch-models] Failed to fetch models:', response.status);
         setAvailableModels([]);
@@ -413,7 +423,15 @@ Tip: I automatically detect and install npm packages from your code imports (lik
     } finally {
       setLoadingModels(false);
     }
-  };
+  }, [customEndpoint.url, customEndpoint.apiKey, customEndpoint.model, setAvailableModels, setCustomEndpoint]);
+
+  // Auto-fetch models when endpoint URL changes
+  useEffect(() => {
+    if (customEndpoint.url) {
+      console.log('[auto-fetch-models] URL changed, fetching models for:', customEndpoint.url);
+      fetchAvailableModels();
+    }
+  }, [customEndpoint.url, fetchAvailableModels]);
   
   useEffect(() => {
     // Handle Escape key for home screen
@@ -3320,9 +3338,13 @@ Focus on the key sections and content, making it clean and modern.`;
       )}
       
       <div className="bg-card px-4 py-4 border-b border-border flex items-center justify-between">
-        <div className="flex items-center gap-4">
+        <button 
+          onClick={() => window.location.href = '/'}
+          className="flex items-center gap-2 hover:text-gray-300 transition-colors cursor-pointer"
+        >
           <span className="text-2xl">😡</span>
-        </div>
+          <span className="text-lg font-semibold">Hateable</span>
+        </button>
         <div className="flex items-center gap-2">
           {/* Endpoint Info - Left side */}
           <div className="text-sm text-gray-400 px-2 py-1 bg-gray-800 rounded border border-gray-600">
