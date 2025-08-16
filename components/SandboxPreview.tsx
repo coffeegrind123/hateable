@@ -86,7 +86,10 @@ export default function SandboxPreview({
         {isLoading && (
           <div className="absolute inset-0 bg-gray-900/80 flex items-center justify-center z-10">
             <div className="text-center">
-              <Loader2 className="w-8 h-8 animate-spin mx-auto mb-2" />
+              <div className="relative w-8 h-8 mx-auto mb-2">
+                <div className="absolute inset-0 border-2 border-gray-700 rounded-full"></div>
+                <div className="absolute inset-0 border-2 border-blue-500 rounded-full animate-spin border-t-transparent"></div>
+              </div>
               <p className="text-sm text-gray-400">
                 {type === 'vite' ? 'Starting Vite dev server...' : 'Starting Next.js dev server...'}
               </p>
@@ -97,9 +100,12 @@ export default function SandboxPreview({
         <iframe
           key={iframeKey}
           src={previewUrl}
-          className="w-full h-[600px] bg-white"
+          className="w-full h-[600px] bg-gray-900"
           title={`${type} preview`}
           sandbox="allow-scripts allow-same-origin allow-forms"
+          style={{
+            colorScheme: 'dark'
+          }}
         />
       </div>
 

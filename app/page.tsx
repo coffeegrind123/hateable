@@ -1291,14 +1291,20 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                       </div>
                     </div>
                   ) : (
-                    <div className="bg-gray-900 border border-gray-600 rounded-lg overflow-hidden">
-                      <div className="px-4 py-2 bg-gray-700 text-gray-100 flex items-center justify-between">
+                    <div className="bg-black border border-gray-800 rounded-lg overflow-hidden shadow-2xl">
+                      <div className="px-4 py-2 bg-gray-900 text-green-400 flex items-center justify-between border-b border-gray-800">
                         <div className="flex items-center gap-2">
-                          <div className="w-3 h-3 border-2 border-red-9000 border-t-transparent rounded-full animate-spin" />
+                          <div className="flex gap-1">
+                            <div className="w-3 h-3 bg-red-500 rounded-full"></div>
+                            <div className="w-3 h-3 bg-yellow-500 rounded-full"></div>
+                            <div className="w-3 h-3 bg-green-500 rounded-full"></div>
+                          </div>
+                          <span className="font-mono text-sm text-gray-400">●</span>
                           <span className="font-mono text-sm">Streaming code...</span>
+                          <div className="w-2 h-4 bg-green-400 animate-pulse ml-1"></div>
                         </div>
                       </div>
-                      <div className="p-4 bg-gray-900 rounded">
+                      <div className="p-4 bg-black rounded">
                         <SyntaxHighlighter
                           language="jsx"
                           style={vscDarkPlus}
@@ -1307,12 +1313,17 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                             padding: '1rem',
                             fontSize: '0.875rem',
                             background: 'transparent',
+                            fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+                            lineHeight: '1.5',
                           }}
                           showLineNumbers={true}
                         >
-                          {generationProgress.streamedCode || 'Starting code generation...'}
+                          {generationProgress.streamedCode || '// Starting code generation...\n// Waiting for AI response...'}
                         </SyntaxHighlighter>
-                        <span className="inline-block w-2 h-4 bg-red-500 ml-1 animate-pulse" />
+                        <div className="flex items-center mt-2">
+                          <span className="text-green-400 font-mono text-sm">❯</span>
+                          <span className="inline-block w-2 h-4 bg-green-400 ml-1 animate-pulse"></span>
+                        </div>
                       </div>
                     </div>
                   )
@@ -1490,7 +1501,10 @@ Tip: I automatically detect and install npm packages from your code imports (lik
           <div className="relative w-full h-full bg-gray-800 flex items-center justify-center">
             <div className="text-center">
               <div className="mb-8">
-                <div className="w-16 h-16 border-4 border-red-700 border-t-red-9000 rounded-full animate-spin mx-auto"></div>
+                <div className="relative w-16 h-16 mx-auto">
+                  <div className="absolute inset-0 border-4 border-gray-700 rounded-full"></div>
+                  <div className="absolute inset-0 border-4 border-blue-500 rounded-full animate-spin border-t-transparent"></div>
+                </div>
               </div>
               <h3 className="text-xl font-semibold text-gray-200 mb-2">
                 {loadingStage === 'gathering' && 'Gathering website information...'}
