@@ -54,7 +54,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production
 
 # Build the application for production
-ENV NODE_OPTIONS="--max-old-space-size=16384"
+ENV NODE_OPTIONS="--max-old-space-size=32768"
 ENV NEXT_DISABLE_TRACE=1
 RUN pnpm run build:prod
 

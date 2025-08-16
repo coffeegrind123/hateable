@@ -1,8 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // Enable standalone output for production Docker builds
+  // Enable standalone output for production Docker builds but disable tracing
   output: 'standalone',
+  outputFileTracing: false,
   
   // Optimize for production
   compress: true,
@@ -45,10 +46,6 @@ const nextConfig: NextConfig = {
     return config;
   },
   
-  // File tracing for standalone builds
-  outputFileTracingIncludes: {
-    '/api/**/*': ['./node_modules/**/*'],
-  },
   
   // Headers for security and performance
   async headers() {
