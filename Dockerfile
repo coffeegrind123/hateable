@@ -16,11 +16,12 @@ RUN corepack install -g pnpm@10.14.0
 COPY package.json pnpm-lock.yaml* .npmrc ./
 
 # Install dependencies using pnpm and allow build scripts
-RUN if [ -f pnpm-lock.yaml ]; then \
-  pnpm install --frozen-lockfile --prod=false; \
-else \
-  pnpm install; \
-fi
+RUN pnpm config set script-approval-required false && \
+    if [ -f pnpm-lock.yaml ]; then \
+      pnpm install --frozen-lockfile --prod=false; \
+    else \
+      pnpm install; \
+    fi
 
 # Ensure critters is available for production builds
 RUN pnpm add critters@^0.0.24
@@ -28,11 +29,12 @@ RUN pnpm add critters@^0.0.24
 # Install firecrawl-simple submodule dependencies
 COPY firecrawl-simple/apps/api/package.json firecrawl-simple/apps/api/pnpm-lock.yaml* ./firecrawl-simple/apps/api/
 WORKDIR /app/firecrawl-simple/apps/api
-RUN if [ -f pnpm-lock.yaml ]; then \
-  pnpm install --frozen-lockfile --prod=false; \
-else \
-  pnpm install; \
-fi
+RUN pnpm config set script-approval-required false && \
+    if [ -f pnpm-lock.yaml ]; then \
+      pnpm install --frozen-lockfile --prod=false; \
+    else \
+      pnpm install; \
+    fi
 WORKDIR /app
 
 # Rebuild the source code only when needed

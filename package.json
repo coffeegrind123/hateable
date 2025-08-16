@@ -71,5 +71,23 @@
     "node": ">=20.18.0",
     "pnpm": ">=10.14.0"
   },
-  "packageManager": "pnpm@10.14.0"
+  "packageManager": "pnpm@10.14.0",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@tailwindcss/oxide",
+      "sharp",
+      "unrs-resolver",
+      "esbuild",
+      "@swc/core",
+      "turbo"
+    ],
+    "allowBuild": {
+      "@tailwindcss/oxide": true,
+      "sharp": true,
+      "unrs-resolver": true,
+      "esbuild": true,
+      "@swc/core": true,
+      "turbo": true
+    }
+  }
 }
