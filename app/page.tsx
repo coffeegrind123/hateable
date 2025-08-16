@@ -404,10 +404,10 @@ Tip: I automatically detect and install npm packages from your code imports (lik
         setAvailableModels(models);
         console.log('[fetch-models] Found models:', models);
         
-        // Automatically set the first available model if no model is set or if current model is not available
-        if (models.length > 0 && (!customEndpoint.model || customEndpoint.model === 'gpt-3.5-turbo' || !models.includes(customEndpoint.model))) {
+        // Always set the first available model
+        if (models.length > 0) {
           const firstModel = models[0];
-          console.log('[fetch-models] Auto-setting model to:', firstModel);
+          console.log('[fetch-models] Auto-setting model to first available:', firstModel);
           setCustomEndpoint(prev => ({
             ...prev,
             model: firstModel
