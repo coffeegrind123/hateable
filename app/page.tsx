@@ -3762,7 +3762,7 @@ Focus on the key sections and content, making it clean and modern.`;
                         </div>
                       </div>
                     ) : (
-                      msg.content
+                      <div className="whitespace-pre-wrap text-white">{msg.content}</div>
                     )}
                       </div>
                   
