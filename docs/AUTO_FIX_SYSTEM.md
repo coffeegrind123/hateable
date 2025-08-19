@@ -15,6 +15,7 @@ The AI code generation has been enhanced with strict validation rules:
 The system monitors Vite build errors in real-time and identifies:
 
 - **Missing Component Errors**: When imports can't be resolved (e.g., `./components/NewsSection`)
+- **Missing Dependency Errors**: When external packages can't be resolved (e.g., `lucide-react`, `react-router-dom`)
 - **Syntax Errors**: Common JSX/JavaScript syntax issues
 - **Missing Asset Errors**: Missing CSS files or other assets
 
@@ -22,8 +23,18 @@ The system monitors Vite build errors in real-time and identifies:
 When errors are detected, the system can automatically:
 
 - **Create Missing Components**: Generate placeholder components with proper structure
+- **Install Missing Dependencies**: Automatically install packages via npm/pnpm with streaming progress
 - **Fix Syntax Issues**: Correct common syntax errors like `class=` → `className=`
 - **Create Missing Assets**: Generate basic CSS files with proper Tailwind setup
+
+### 4. Enhanced Dependency Management
+The system now includes comprehensive dependency handling:
+
+- **Real-time Package Detection**: Scans import statements to identify required packages
+- **Streaming Installation Progress**: Shows live progress during package installation
+- **Containerized Sandbox Support**: Handles dependencies in both local and containerized environments
+- **Error Pattern Matching**: Detects various dependency-related error messages
+- **Automatic Retry**: Attempts package installation before falling back to LLM fixes
 
 ## Configuration
 
@@ -126,6 +137,15 @@ POST /api/auto-fix-errors
 - **Action**: Creates basic React component
 - **Files**: `.jsx` components in appropriate directories
 
+### Missing Dependencies
+- **Patterns**: 
+  - `Failed to resolve import "package-name" from "file.jsx"`
+  - `Cannot resolve module 'package-name'`
+  - `Module not found: Error: Can't resolve 'package-name'`
+  - `Could not resolve 'package-name'`
+- **Action**: Automatically installs package via npm/pnpm
+- **Streaming**: Shows real-time installation progress
+
 ### Syntax Errors
 - **Pattern**: `SyntaxError` or `Unexpected token`
 - **Actions**: 
@@ -139,10 +159,12 @@ POST /api/auto-fix-errors
 
 ## Benefits
 
-1. **Faster Development**: No more manual component creation for missing imports
+1. **Faster Development**: No more manual component creation or package installation
 2. **Reduced Errors**: Prevents common build failures from breaking the development flow
-3. **Better UX**: Seamless experience when AI generates incomplete code
+3. **Better UX**: Seamless experience with streaming progress and automatic dependency resolution
 4. **Learning Tool**: Generated components serve as starting points for customization
+5. **Zero Configuration**: Dependencies are automatically detected and installed from import statements
+6. **Real-time Feedback**: Live progress updates during package installation and error resolution
 
 ## Best Practices
 

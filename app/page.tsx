@@ -22,6 +22,8 @@ import {
 } from '@/lib/icons';
 import { motion } from 'framer-motion';
 import CodeApplicationProgress, { type CodeApplicationState } from '@/components/CodeApplicationProgress';
+import HMRErrorDetector from '@/components/HMRErrorDetector';
+import StreamingAnalysisDisplay from '@/components/StreamingAnalysisDisplay';
 
 interface SandboxData {
   sandboxId: string;
@@ -87,6 +89,8 @@ function AISandboxPage() {
   const [isPreparingDesign, setIsPreparingDesign] = useState(false);
   const [targetUrl, setTargetUrl] = useState<string>('');
   const [loadingStage, setLoadingStage] = useState<'gathering' | 'planning' | 'generating' | null>(null);
+  const [analysisLines, setAnalysisLines] = useState<string[]>([]);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [, setSandboxFiles] = useState<Record<string, string>>({});
   const [, setFileStructure] = useState<string>('');
   
@@ -140,6 +144,7 @@ function AISandboxPage() {
 
   // Global flag to prevent concurrent sandbox operations
   const isCreatingSandboxRef = useRef(false);
+  const restoringRef = useRef(false);
 
   // Helper functions that need to be defined before createSandbox
   const updateStatus = useCallback((text: string, active: boolean) => {
@@ -162,6 +167,30 @@ function AISandboxPage() {
       return [...prev, { content, type, timestamp: new Date(), metadata }];
     });
   }, []);
+
+  // Auto-expand folders when new files are added
+  useEffect(() => {
+    if (generationProgress.files.length > 0) {
+      setExpandedFolders(prev => {
+        const newFolders = new Set(prev);
+        let shouldUpdate = false;
+        
+        generationProgress.files.forEach(file => {
+          const parts = file.path.split('/');
+          // Auto-expand all parent directories for new files
+          for (let i = 1; i < parts.length; i++) {
+            const folderPath = parts.slice(0, i).join('/');
+            if (folderPath && !newFolders.has(folderPath)) {
+              newFolders.add(folderPath);
+              shouldUpdate = true;
+            }
+          }
+        });
+        
+        return shouldUpdate ? newFolders : prev;
+      });
+    }
+  }, [generationProgress.files]);
 
   const displayStructure = useCallback((structure: any) => {
     if (typeof structure === 'object') {
@@ -214,7 +243,7 @@ function AISandboxPage() {
     await createSandbox(true, undefined, true);
   }, [searchParams, router]);
 
-  const createSandbox = useCallback(async (fromHomeScreen = false, existingSandboxId?: string, forceNew = false) => {
+  const createSandbox = useCallback(async (fromHomeScreen = false, existingSandboxId?: string, forceNew = false, sourceUrl?: string) => {
     // Prevent concurrent sandbox creation
     if (isCreatingSandboxRef.current) {
       console.log('[createSandbox] Another sandbox operation is already in progress, skipping...');
@@ -239,7 +268,10 @@ function AISandboxPage() {
       const response = await fetch('/api/create-local-sandbox', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(existingSandboxId ? { existingSandboxId: existingSandboxId } : {})
+        body: JSON.stringify({
+          ...(existingSandboxId ? { existingSandboxId } : {}),
+          ...(sourceUrl ? { sourceUrl } : {})
+        })
       });
       
       const data = await response.json();
@@ -247,7 +279,13 @@ function AISandboxPage() {
       
       if (data.success) {
         setSandboxData(data);
+        // Also set global variable that cloning process waits for
+        if (typeof window !== 'undefined') {
+          (window as any).global = (window as any).global || {};
+          (window as any).global.sandboxData = data;
+        }
         updateStatus('Sandbox active', true);
+        setLoadingStage(null); // Clear loading stage to show iframe
         log('Sandbox created successfully!');
         log(`Sandbox ID: ${data.sandboxId}`);
         log(`URL: ${data.url}`);
@@ -302,13 +340,28 @@ Tip: I automatically detect and install npm packages from your code imports (lik
           }
         }, 100);
       } else {
+        // If it's a sandbox restoration failure, check if we should clear the URL
+        if (existingSandboxId && (data.error?.includes('not found') || data.error?.includes('invalid'))) {
+          console.warn('[createSandbox] Sandbox restoration failed, clearing URL parameter:', data.error);
+          // Clear invalid sandbox parameter from URL
+          const newParams = new URLSearchParams(searchParams.toString());
+          newParams.delete('sandbox');
+          router.replace(`/?${newParams.toString()}`, { scroll: false });
+        }
         throw new Error(data.error || 'Unknown error');
       }
     } catch (error: any) {
       console.error('[createSandbox] Error:', error);
       updateStatus('Error', false);
       log(`Failed to create sandbox: ${error.message}`, 'error');
-      addChatMessage(`Failed to create sandbox: ${error.message}`, 'system');
+      
+      // Don't show chat message for restoration failures - just log them
+      if (!existingSandboxId) {
+        addChatMessage(`Failed to create sandbox: ${error.message}`, 'system');
+      }
+      
+      // Re-throw error for upstream handling
+      throw error;
     } finally {
       setLoading(false);
       isCreatingSandboxRef.current = false;
@@ -355,13 +408,28 @@ Tip: I automatically detect and install npm packages from your code imports (lik
       const sandboxIdParam = searchParams.get('sandbox');
       
       if (sandboxIdParam) {
-        // Restore existing sandbox by calling create-local-sandbox with the existing ID
-        console.log('[home] Attempting to restore sandbox:', sandboxIdParam);
-        await createSandbox(true, sandboxIdParam);
+        // Validate sandbox ID format before attempting restoration
+        if (sandboxIdParam.match(/^sandbox_\d+_[a-z0-9]+$/)) {
+          console.log('[home] Attempting to restore valid sandbox:', sandboxIdParam);
+          try {
+            await createSandbox(true, sandboxIdParam);
+          } catch (error) {
+            console.error('[home] Failed to restore sandbox, clearing URL parameter:', error);
+            // Clear invalid sandbox parameter from URL
+            const newParams = new URLSearchParams(searchParams.toString());
+            newParams.delete('sandbox');
+            router.replace(`/?${newParams.toString()}`, { scroll: false });
+          }
+        } else {
+          console.warn('[home] Invalid sandbox ID format, clearing URL parameter:', sandboxIdParam);
+          // Clear invalid sandbox parameter from URL
+          const newParams = new URLSearchParams(searchParams.toString());
+          newParams.delete('sandbox');
+          router.replace(`/?${newParams.toString()}`, { scroll: false });
+        }
       } else {
-        // Automatically create new sandbox
-        console.log('[home] No sandbox in URL, creating new sandbox automatically...');
-        await createSandbox(true);
+        // Don't automatically create sandbox - wait for user to submit a query
+        console.log('[home] No sandbox in URL, waiting for user to submit query...');
       }
     };
     
@@ -372,12 +440,33 @@ Tip: I automatically detect and install npm packages from your code imports (lik
   useEffect(() => {
     const sandboxIdParam = searchParams.get('sandbox');
     
-    // Skip if we're already in initialization or already have this sandbox
-    if (hasInitializedRef.current && sandboxIdParam && (!sandboxData || sandboxData.sandboxId !== sandboxIdParam)) {
-      console.log('[home] URL parameter changed, restoring sandbox:', sandboxIdParam);
-      createSandbox(true, sandboxIdParam);
+    // Only restore if we have a different sandbox ID and we're not currently restoring
+    if (hasInitializedRef.current && sandboxIdParam && sandboxData?.sandboxId !== sandboxIdParam && !restoringRef.current && !isCreatingSandboxRef.current) {
+      // Validate sandbox ID format before attempting restoration
+      if (sandboxIdParam.match(/^sandbox_\d+_[a-z0-9]+$/)) {
+        console.log('[home] URL parameter changed, restoring valid sandbox:', sandboxIdParam);
+        restoringRef.current = true;
+        createSandbox(true, sandboxIdParam)
+          .then(() => {
+            restoringRef.current = false;
+          })
+          .catch((error) => {
+            console.error('[home] Failed to restore sandbox from URL change, clearing parameter:', error);
+            restoringRef.current = false;
+            // Clear invalid sandbox parameter from URL
+            const newParams = new URLSearchParams(searchParams.toString());
+            newParams.delete('sandbox');
+            router.replace(`/?${newParams.toString()}`, { scroll: false });
+          });
+      } else {
+        console.warn('[home] Invalid sandbox ID format in URL change, clearing parameter:', sandboxIdParam);
+        // Clear invalid sandbox parameter from URL
+        const newParams = new URLSearchParams(searchParams.toString());
+        newParams.delete('sandbox');
+        router.replace(`/?${newParams.toString()}`, { scroll: false });
+      }
     }
-  }, [searchParams, sandboxData]);
+  }, [searchParams]);
 
   // Save custom endpoint configuration to localStorage
   useEffect(() => {
@@ -424,6 +513,104 @@ Tip: I automatically detect and install npm packages from your code imports (lik
       setLoadingModels(false);
     }
   }, [customEndpoint.url, customEndpoint.apiKey, customEndpoint.model, setAvailableModels, setCustomEndpoint]);
+
+  // Handle HMR errors automatically
+  const handleHMRErrors = useCallback(async (errors: Array<{ type: string; message: string; package?: string }>) => {
+    console.log('[HMR Error Detection] Detected errors:', errors);
+    
+    for (const error of errors) {
+      if (error.type === 'component-missing') {
+        addChatMessage(`🔧 Auto-fixing missing component: ${error.package}`, 'system');
+      } else if (error.type === 'npm-missing') {
+        addChatMessage(`📦 Installing missing package: ${error.package}`, 'system');
+        
+        // Trigger package installation
+        if (sandboxData?.sandboxId && error.package) {
+          try {
+            const response = await fetch('/api/install-packages', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                sandboxId: sandboxData.sandboxId,
+                packages: [error.package]
+              })
+            });
+            
+            if (response.ok) {
+              addChatMessage(`✅ Successfully installed ${error.package}`, 'system');
+            } else {
+              addChatMessage(`❌ Failed to install ${error.package}`, 'system');
+            }
+          } catch (err) {
+            console.error('[HMR Error Handler] Package installation failed:', err);
+            addChatMessage(`❌ Error installing ${error.package}`, 'system');
+          }
+        }
+      }
+    }
+  }, [addChatMessage, sandboxData?.sandboxId]);
+
+  // Handle streaming website analysis
+  const startStreamingAnalysis = useCallback(async (url: string, content: any) => {
+    setIsAnalyzing(true);
+    setAnalysisLines([]);
+    
+    try {
+      const response = await fetch('/api/analyze-website-stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url, content })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Analysis failed: ${response.status}`);
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error('Failed to read analysis stream');
+      }
+
+      const decoder = new TextDecoder();
+      
+      while (true) {
+        const { done, value } = await reader.read();
+        
+        if (done) break;
+        
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n');
+        
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              
+              if (data.type === 'analysis_step') {
+                setAnalysisLines(prev => [...prev, data.step]);
+              } else if (data.type === 'analysis_complete') {
+                setAnalysisLines(prev => [...prev, data.summary]);
+                // Small delay before completing
+                setTimeout(() => {
+                  setIsAnalyzing(false);
+                }, 1000);
+              } else if (data.type === 'error') {
+                console.error('[Streaming Analysis] Error:', data.message);
+                setAnalysisLines(prev => [...prev, `Error: ${data.message}`]);
+                setIsAnalyzing(false);
+              }
+            } catch (err) {
+              // Ignore JSON parse errors for incomplete chunks
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error('[Streaming Analysis] Failed:', error);
+      setAnalysisLines(prev => [...prev, `Analysis failed: ${error instanceof Error ? error.message : 'Unknown error'}`]);
+      setIsAnalyzing(false);
+    }
+  }, []);
 
   // Auto-fetch models when endpoint URL changes
   useEffect(() => {
@@ -575,25 +762,12 @@ Tip: I automatically detect and install npm packages from your code imports (lik
   };
 
   const checkSandboxStatus = async () => {
-    try {
-      const response = await fetch('/api/sandbox-status');
-      const data = await response.json();
-      
-      if (data.active && data.healthy && data.sandboxData) {
-        setSandboxData(data.sandboxData);
-        updateStatus('Sandbox active', true);
-      } else if (data.active && !data.healthy) {
-        // Sandbox exists but not responding
-        updateStatus('Sandbox not responding', false);
-        // Optionally try to create a new one
-      } else {
-        setSandboxData(null);
-        updateStatus('No sandbox', false);
-      }
-    } catch (error) {
-      console.error('Failed to check sandbox status:', error);
-      setSandboxData(null);
-      updateStatus('Error', false);
+    // For containerized sandboxes, status is managed by the sandbox service
+    // and tracked via sandboxData state - no need for separate status checking
+    if (sandboxData) {
+      updateStatus('Sandbox active', true);
+    } else {
+      updateStatus('No sandbox', false);
     }
   };
 
@@ -1291,39 +1465,17 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                       </div>
                     </div>
                   ) : (
-                    <div className="bg-black border border-gray-800 rounded-lg overflow-hidden shadow-2xl">
-                      <div className="px-4 py-2 bg-gray-900 text-green-400 flex items-center justify-between border-b border-gray-800">
-                        <div className="flex items-center gap-2">
-                          <div className="flex gap-1">
-                            <div className="w-3 h-3 bg-red-500 rounded-full"></div>
-                            <div className="w-3 h-3 bg-yellow-500 rounded-full"></div>
-                            <div className="w-3 h-3 bg-green-500 rounded-full"></div>
+                    // Simple loading state - no empty streaming display
+                    <div className="flex items-center justify-center h-full">
+                      <div className="text-center">
+                        <div className="mb-8 relative">
+                          <div className="w-24 h-24 mx-auto">
+                            <div className="absolute inset-0 border-4 border-gray-800 rounded-full"></div>
+                            <div className="absolute inset-0 border-4 border-blue-500 rounded-full animate-spin border-t-transparent"></div>
                           </div>
-                          <span className="font-mono text-sm text-gray-400">●</span>
-                          <span className="font-mono text-sm">Streaming code...</span>
-                          <div className="w-2 h-4 bg-green-400 animate-pulse ml-1"></div>
                         </div>
-                      </div>
-                      <div className="p-4 bg-black rounded">
-                        <SyntaxHighlighter
-                          language="jsx"
-                          style={vscDarkPlus}
-                          customStyle={{
-                            margin: 0,
-                            padding: '1rem',
-                            fontSize: '0.875rem',
-                            background: 'transparent',
-                            fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-                            lineHeight: '1.5',
-                          }}
-                          showLineNumbers={true}
-                        >
-                          {generationProgress.streamedCode || '// Starting code generation...\n// Waiting for AI response...'}
-                        </SyntaxHighlighter>
-                        <div className="flex items-center mt-2">
-                          <span className="text-green-400 font-mono text-sm">❯</span>
-                          <span className="inline-block w-2 h-4 bg-green-400 ml-1 animate-pulse"></span>
-                        </div>
+                        <h3 className="text-xl font-medium text-white mb-2">Generating code...</h3>
+                        <p className="text-gray-400 text-sm">{generationProgress.status || 'Processing your request...'}</p>
                       </div>
                     </div>
                   )
@@ -1498,25 +1650,39 @@ Tip: I automatically detect and install npm packages from your code imports (lik
       // Don't show loading overlay for edits
       if (loadingStage || (generationProgress.isGenerating && !generationProgress.isEdit)) {
         return (
-          <div className="relative w-full h-full bg-gray-800 flex items-center justify-center">
-            <div className="text-center">
-              <div className="mb-8">
-                <div className="relative w-16 h-16 mx-auto">
-                  <div className="absolute inset-0 border-4 border-gray-700 rounded-full"></div>
-                  <div className="absolute inset-0 border-4 border-blue-500 rounded-full animate-spin border-t-transparent"></div>
-                </div>
+          <div className="relative w-full h-full bg-gray-800 flex flex-col items-center justify-center p-6">
+            {/* Show streaming analysis when analyzing */}
+            {(isAnalyzing || analysisLines.length > 0) && loadingStage === 'gathering' && (
+              <div className="w-full max-w-2xl">
+                <StreamingAnalysisDisplay 
+                  analysisLines={analysisLines}
+                  isActive={isAnalyzing}
+                  title="Analyzing website..."
+                />
               </div>
-              <h3 className="text-xl font-semibold text-gray-200 mb-2">
-                {loadingStage === 'gathering' && 'Gathering website information...'}
-                {loadingStage === 'planning' && 'Planning your design...'}
-                {(loadingStage === 'generating' || generationProgress.isGenerating) && 'Generating your application...'}
-              </h3>
-              <p className="text-gray-400 text-sm">
-                {loadingStage === 'gathering' && 'Analyzing the website structure and content'}
-                {loadingStage === 'planning' && 'Creating the optimal React component architecture'}
-                {(loadingStage === 'generating' || generationProgress.isGenerating) && 'Writing clean, modern code for your app'}
-              </p>
-            </div>
+            )}
+            
+            {/* Traditional loading display for other stages or when not analyzing */}
+            {(!isAnalyzing && analysisLines.length === 0) || loadingStage !== 'gathering' ? (
+              <div className="text-center">
+                <div className="mb-8">
+                  <div className="relative w-16 h-16 mx-auto">
+                    <div className="absolute inset-0 border-4 border-gray-700 rounded-full"></div>
+                    <div className="absolute inset-0 border-4 border-blue-500 rounded-full animate-spin border-t-transparent"></div>
+                  </div>
+                </div>
+                <h3 className="text-xl font-semibold text-gray-200 mb-2">
+                  {loadingStage === 'gathering' && 'Gathering website information...'}
+                  {loadingStage === 'planning' && 'Planning your design...'}
+                  {(loadingStage === 'generating' || generationProgress.isGenerating) && 'Generating your application...'}
+                </h3>
+                <p className="text-gray-400 text-sm">
+                  {loadingStage === 'gathering' && 'Analyzing the website structure and content'}
+                  {loadingStage === 'planning' && 'Creating the optimal React component architecture'}
+                  {(loadingStage === 'generating' || generationProgress.isGenerating) && 'Writing clean, modern code for your app'}
+                </p>
+              </div>
+            ) : null}
           </div>
         );
       }
@@ -1532,6 +1698,14 @@ Tip: I automatically detect and install npm packages from your code imports (lik
               title="Open Lovable Sandbox"
               allow="clipboard-write"
               sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
+            />
+            {/* HMR Error Detection and Auto-fix */}
+            <HMRErrorDetector 
+              iframeRef={iframeRef}
+              onErrorDetected={handleHMRErrors}
+              sandboxId={sandboxData?.sandboxId}
+              autoFixEnabled={true}
+              customEndpoint={customEndpoint}
             />
             {/* Refresh button */}
             <button
@@ -2143,11 +2317,26 @@ Tip: I automatically detect and install npm packages from your code imports (lik
     const cleanUrl = url.replace(/^https?:\/\//i, '');
     addChatMessage(`Starting to clone ${cleanUrl}...`, 'system');
     
+    // Reset analysis state
+    setAnalysisLines([]);
+    setIsAnalyzing(false);
+    
+    // Update generation progress status
+    setGenerationProgress(prev => ({
+      ...prev,
+      status: `Starting to clone ${cleanUrl}...`,
+      isStreaming: true
+    }));
+    
     // Capture screenshot immediately and switch to preview tab
     captureUrlScreenshot(url);
     
     try {
       addChatMessage('Scraping website content...', 'system');
+      setGenerationProgress(prev => ({
+        ...prev,
+        status: 'Scraping website content...'
+      }));
       const scrapeResponse = await fetch('/api/scrape-url-firecrawl', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -2165,6 +2354,13 @@ Tip: I automatically detect and install npm packages from your code imports (lik
       }
       
       addChatMessage(`Scraped ${scrapeData.content.length} characters from ${url}`, 'system');
+      setGenerationProgress(prev => ({
+        ...prev,
+        status: `Scraped ${scrapeData.content.length} characters from ${url}`
+      }));
+      
+      // Start streaming analysis
+      await startStreamingAnalysis(url, scrapeData);
       
       // Clear preparing design state and switch to generation tab
       setIsPreparingDesign(false);
@@ -2184,11 +2380,21 @@ Tip: I automatically detect and install npm packages from your code imports (lik
       let sandboxPromise: Promise<void> | null = null;
       if (!sandboxData) {
         addChatMessage('Waiting for sandbox to be ready...', 'system');
-        sandboxPromise = new Promise((resolve) => {
+        setGenerationProgress(prev => ({
+          ...prev,
+          status: 'Waiting for sandbox to be ready...'
+        }));
+        sandboxPromise = new Promise((resolve, reject) => {
+          let attempts = 0;
+          const maxAttempts = 300; // 30 seconds max (300 * 100ms)
           const checkSandbox = () => {
-            if (global.sandboxData) {
-              setSandboxData(global.sandboxData);
+            attempts++;
+            if (global.sandboxData || (typeof window !== 'undefined' && (window as any).global?.sandboxData)) {
+              const sandboxData = global.sandboxData || (typeof window !== 'undefined' && (window as any).global?.sandboxData);
+              setSandboxData(sandboxData);
               resolve();
+            } else if (attempts >= maxAttempts) {
+              reject(new Error('Timeout waiting for sandbox to be ready'));
             } else {
               setTimeout(checkSandbox, 100);
             }
@@ -2198,6 +2404,10 @@ Tip: I automatically detect and install npm packages from your code imports (lik
       }
       
       addChatMessage('Analyzing and generating React recreation...', 'system');
+      setGenerationProgress(prev => ({
+        ...prev,
+        status: 'Analyzing and generating React recreation...'
+      }));
       
       const recreatePrompt = `I scraped this website and want you to recreate it as a modern React application.
 
@@ -2234,6 +2444,13 @@ IMPORTANT CONSTRAINTS:
 - Use Tailwind CSS for ALL styling (no custom CSS files)
 - Make sure the app actually renders visible content
 - Create ALL components that you reference in imports
+
+CRITICAL VALIDATION RULES:
+- EVERY import statement in any file MUST have a corresponding component file created in the SAME response
+- Count your imports vs files created - they must match exactly
+- If App.jsx imports 5 components, you MUST create exactly 5 component files
+- NEVER leave any import unsatisfied - this will cause build errors
+- Self-check: Before finishing, verify every import has a matching file created
 
 IMAGE HANDLING RULES:
 - When the scraped content includes images, USE THE ORIGINAL IMAGE URLS whenever appropriate
@@ -2470,7 +2687,11 @@ Focus on the key sections and content, making it clean and modern while preservi
       
       const data = await response.json();
       if (data.success && data.screenshot) {
-        setUrlScreenshot(data.screenshot);
+        // Ensure the screenshot data has proper data URI prefix
+        const screenshotData = data.screenshot.startsWith('data:') 
+          ? data.screenshot 
+          : `data:image/png;base64,${data.screenshot}`;
+        setUrlScreenshot(screenshotData);
         // Set preparing design state
         setIsPreparingDesign(true);
         // Store the clean URL for display
@@ -2507,18 +2728,25 @@ Focus on the key sections and content, making it clean and modern while preservi
     const cleanUrl = displayUrl.replace(/^https?:\/\//i, '');
     addChatMessage(`Starting to clone ${cleanUrl}...`, 'system');
     
-    // Wait for sandbox to be ready
-    const sandboxPromise = !sandboxData ? new Promise<void>((resolve) => {
-      const checkSandbox = () => {
-        if (global.sandboxData) {
-          setSandboxData(global.sandboxData);
-          resolve();
-        } else {
-          setTimeout(checkSandbox, 100);
-        }
-      };
-      checkSandbox();
-    }) : Promise.resolve();
+    // Reset analysis state
+    setAnalysisLines([]);
+    setIsAnalyzing(false);
+    
+    // Update generation progress status
+    setGenerationProgress(prev => ({
+      ...prev,
+      status: `Starting to clone ${cleanUrl}...`,
+      isStreaming: true
+    }));
+    
+    // Create sandbox if it doesn't exist
+    if (!sandboxData) {
+      console.log('[handleHomeScreenSubmit] Creating sandbox for first time...');
+      await createSandbox(true);
+    }
+    
+    // Since createSandbox is async and sets sandboxData via state, 
+    // we don't need a separate promise - just proceed
     
     // Only capture screenshot if we don't already have a sandbox (first generation)
     // After sandbox is set up, skip the screenshot phase for faster generation
@@ -2531,12 +2759,14 @@ Focus on the key sections and content, making it clean and modern while preservi
     // Also ensure we're on preview tab to show the loading overlay
     setActiveTab('preview');
     
+    console.log('[handleHomeScreenSubmit] Scheduling code generation to start in 500ms...');
     setTimeout(async () => {
+      console.log('[handleHomeScreenSubmit] Starting code generation flow...');
       setShowHomeScreen(false);
       setHomeScreenFading(false);
       
-      // Wait for sandbox to be ready (if it's still creating)
-      await sandboxPromise;
+      // Sandbox is already created and ready
+      console.log('[handleHomeScreenSubmit] Sandbox ready, starting scraping...');
       
       // Now start the clone process which will stream the generation
       setUrlInput(homeUrlInput);
@@ -2551,6 +2781,7 @@ Focus on the key sections and content, making it clean and modern while preservi
         }
         
         // Screenshot is already being captured in parallel above
+        console.log('[handleHomeScreenSubmit] Making scrape request to:', url);
         
         const scrapeResponse = await fetch('/api/scrape-url-firecrawl', {
           method: 'POST',
@@ -2569,6 +2800,9 @@ Focus on the key sections and content, making it clean and modern while preservi
         }
         
         setUrlStatus(['Website scraped successfully!', 'Generating React app...']);
+        
+        // Start streaming analysis
+        await startStreamingAnalysis(displayUrl, scrapeData);
         
         // Clear preparing design state and switch to generation tab
         setIsPreparingDesign(false);
@@ -2613,6 +2847,13 @@ IMPORTANT INSTRUCTIONS:
 - Create proper component structure
 - Make sure the app actually renders visible content
 - Create ALL components that you reference in imports
+
+CRITICAL VALIDATION RULES:
+- EVERY import statement in any file MUST have a corresponding component file created in the SAME response
+- Count your imports vs files created - they must match exactly
+- If App.jsx imports 5 components, you MUST create exactly 5 component files
+- NEVER leave any import unsatisfied - this will cause build errors
+- Self-check: Before finishing, verify every import has a matching file created
 ${homeContextInput ? '- Apply the user\'s context/theme requirements throughout the application' : ''}
 
 Focus on the key sections and content, making it clean and modern.`;

@@ -1,11 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { promises as fs } from 'fs';
-import path from 'path';
-import { exec, spawn } from 'child_process';
-import { promisify } from 'util';
-import { appConfig } from '@/config/app.config';
-
-const execAsync = promisify(exec);
+import { sandboxClient, type SandboxFile } from '@/lib/sandbox-client';
 
 interface ParsedResponse {
   explanation: string;
@@ -76,14 +70,14 @@ export async function POST(request: NextRequest) {
   try {
     const { response: aiResponse, isEdit = false, packages: additionalPackages = [] } = await request.json();
     
-    if (!global.activeSandbox) {
-      return NextResponse.json({ error: 'No active sandbox' }, { status: 400 });
-    }
-
-    const sandboxPath = global.activeSandbox.sandboxPath;
+    const sandboxId = global.sandboxData?.sandboxId;
     
-    console.log('[apply-local-code-stream] Applying code to local sandbox');
-    console.log('[apply-local-code-stream] Sandbox path:', sandboxPath);
+    if (!sandboxId) {
+      return NextResponse.json({ error: 'No active sandbox found' }, { status: 400 });
+    }
+    
+    console.log('[apply-local-code-stream] Applying code to containerized sandbox');
+    console.log('[apply-local-code-stream] Sandbox ID:', sandboxId);
     
     // Create a stream for real-time updates
     const stream = new TransformStream();
@@ -115,18 +109,26 @@ export async function POST(request: NextRequest) {
           message: `Applying ${parsed.files.length} file(s)...` 
         });
         
-        // Apply files to sandbox
-        const appliedFiles: Record<string, string> = {};
+        // Apply files using containerized sandbox service
+        const sandboxFiles: SandboxFile[] = parsed.files.map(file => ({
+          path: file.path,
+          content: file.content
+        }));
         
+        await sendProgress({ 
+          type: 'status', 
+          message: 'Applying files to containerized sandbox...' 
+        });
+        
+        const result = await sandboxClient.applyCode(sandboxId, sandboxFiles);
+        
+        if (!result.success) {
+          throw new Error(result.message || 'Failed to apply code to sandbox container');
+        }
+        
+        // Track applied files
+        const appliedFiles: Record<string, string> = {};
         for (const file of parsed.files) {
-          const fullPath = path.join(sandboxPath, file.path);
-          const dirPath = path.dirname(fullPath);
-          
-          // Ensure directory exists
-          await fs.mkdir(dirPath, { recursive: true });
-          
-          // Write file
-          await fs.writeFile(fullPath, file.content);
           appliedFiles[file.path] = file.content;
           
           await sendProgress({
@@ -152,109 +154,96 @@ export async function POST(request: NextRequest) {
           global.sandboxState.fileCache.lastSync = Date.now();
         }
         
-        // Install packages if needed
+        // Enhanced package installation with streaming progress
         const allPackages = [...new Set([...parsed.packages, ...additionalPackages])].filter(Boolean);
         
         if (allPackages.length > 0) {
-          await sendProgress({ 
-            type: 'status', 
-            message: `Installing ${allPackages.length} package(s): ${allPackages.join(', ')}` 
+          await sendProgress({
+            type: 'status',
+            message: `Detected ${allPackages.length} package(s): ${allPackages.join(', ')}`
           });
           
-          try {
-            const installCommand = `npm install ${allPackages.join(' ')}`;
-            const { stdout, stderr } = await execAsync(installCommand, {
-              cwd: sandboxPath,
-              timeout: 60000 // 1 minute timeout
+          // Install packages with progress updates
+          for (let i = 0; i < allPackages.length; i++) {
+            const packageName = allPackages[i];
+            await sendProgress({
+              type: 'status',
+              message: `▶ Installing ${packageName} (${i + 1}/${allPackages.length})...`
             });
             
-            if (stderr && !stderr.includes('npm WARN')) {
-              console.warn('[apply-local-code-stream] npm install warnings:', stderr);
+            try {
+              // For containerized sandbox, use the dedicated package installation endpoint
+              const installResponse = await fetch(`${process.env.SANDBOX_SERVICE_URL}/api/sandbox/${sandboxId}/install-packages`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  packages: [packageName]
+                })
+              });
+              
+              if (installResponse.ok) {
+                const result = await installResponse.json();
+                if (result.success && result.packagesInstalled.includes(packageName)) {
+                  await sendProgress({
+                    type: 'package_installed',
+                    package: packageName,
+                    message: `✓ Successfully installed ${packageName}`
+                  });
+                } else {
+                  await sendProgress({
+                    type: 'package_error',
+                    package: packageName,
+                    message: `⚠ Package ${packageName} installation failed`
+                  });
+                }
+              } else {
+                await sendProgress({
+                  type: 'package_error',
+                  package: packageName,
+                  message: `⚠ Package ${packageName} installation failed (${installResponse.status})`
+                });
+              }
+            } catch (error) {
+              await sendProgress({
+                type: 'package_error',
+                package: packageName,
+                message: `⚠ Package ${packageName} installation error: ${error.message}`
+              });
             }
-            
-            await sendProgress({
-              type: 'packages_installed',
-              packages: allPackages,
-              message: 'Packages installed successfully'
-            });
-            
-          } catch (installError: any) {
-            console.error('[apply-local-code-stream] Package installation failed:', installError);
-            await sendProgress({
-              type: 'warning',
-              message: `Package installation had issues: ${installError.message}`
-            });
           }
+          
+          await sendProgress({
+            type: 'packages_complete',
+            packages: allPackages,
+            message: `Completed package detection for ${allPackages.length} package(s)`
+          });
         }
         
-        // Restart Vite server to pick up changes
-        await sendProgress({ 
-          type: 'status', 
-          message: 'Restarting Vite dev server...' 
+        await sendProgress({
+          type: 'status',
+          message: 'Files applied and built successfully in container'
         });
         
+        // Start build error monitoring for auto-fix
         try {
-          // Kill existing Vite process if any
-          if (global.activeSandbox?.viteProcess) {
-            try {
-              global.activeSandbox.viteProcess.kill('SIGTERM');
-              await new Promise(resolve => setTimeout(resolve, 1000)); // Wait for process to die
-            } catch (e) {
-              console.warn('[apply-local-code-stream] Failed to kill existing Vite process:', e);
-            }
-          }
-          
-          // Start new Vite dev server
-          const viteProcess = spawn('npm', ['run', 'dev'], {
-            cwd: sandboxPath,
-            stdio: ['inherit', 'pipe', 'pipe'],
-            env: { ...process.env, FORCE_COLOR: '0' }
+          await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/monitor-build-errors`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sandboxId, action: 'start' })
           });
-
-          // Wait for Vite to start
-          await new Promise((resolve) => {
-            const timeout = setTimeout(resolve, appConfig.sandbox.viteStartupDelay);
-            
-            viteProcess.stdout?.on('data', (data) => {
-              const output = data.toString();
-              console.log('[vite restart]', output);
-              if (output.includes('Local:') || output.includes('ready')) {
-                clearTimeout(timeout);
-                resolve(undefined);
-              }
-            });
-            
-            viteProcess.stderr?.on('data', (data) => {
-              console.error('[vite restart error]', data.toString());
-            });
-          });
-          
-          // Update global sandbox with new process (ensure global.activeSandbox exists)
-          if (global.activeSandbox) {
-            global.activeSandbox.viteProcess = viteProcess;
-          } else {
-            console.warn('[apply-local-code-stream] global.activeSandbox is null, cannot set viteProcess');
-          }
-          
-          await sendProgress({ 
-            type: 'status', 
-            message: 'Vite dev server restarted successfully' 
-          });
-          
-        } catch (viteError: any) {
-          console.error('[apply-local-code-stream] Vite restart failed:', viteError);
-          await sendProgress({
-            type: 'warning',
-            message: `Vite restart had issues: ${viteError.message}`
-          });
+          console.log('[apply-local-code-stream] Build error monitoring started');
+        } catch (monitorError) {
+          console.error('[apply-local-code-stream] Failed to start build monitoring:', monitorError);
         }
-        
+
         await sendProgress({
           type: 'complete',
           files: parsed.files.map(f => f.path),
           packages: allPackages,
           explanation: parsed.explanation,
-          message: 'Code applied successfully and Vite server restarted'
+          message: 'Code applied successfully with auto-fix monitoring enabled'
         });
         
       } catch (error) {

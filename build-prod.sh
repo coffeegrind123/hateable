@@ -7,8 +7,8 @@ echo "🚀 Starting Open Hateable Production Build..."
 
 # Check if pnpm is installed
 if ! command -v pnpm &> /dev/null; then
-    echo "❌ pnpm is not installed. Installing pnpm v10.14.0..."
-    corepack install -g pnpm@10.14.0
+    echo "❌ pnpm is not installed. Installing latest pnpm..."
+    corepack install -g pnpm@latest
 fi
 
 # Verify pnpm version

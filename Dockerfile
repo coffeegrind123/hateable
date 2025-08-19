@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt
 WORKDIR /app
 
 # Install latest pnpm
-RUN corepack install -g pnpm@10.14.0
+RUN corepack install -g pnpm@latest
 
 # Copy configuration files
 COPY package.json pnpm-lock.yaml* .npmrc ./
@@ -42,7 +42,7 @@ FROM base AS builder
 WORKDIR /app
 
 # Enable corepack and install pnpm
-RUN corepack enable && corepack install -g pnpm@10.14.0
+RUN corepack enable && corepack install -g pnpm@latest
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/firecrawl-simple/apps/api/node_modules ./firecrawl-simple/apps/api/node_modules
@@ -67,6 +67,9 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
+# Install curl for health checks
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+
 # Create a non-root user
 RUN groupadd --system --gid 1001 nodejs
 RUN useradd --system --uid 1001 --gid nodejs --shell /bin/bash --create-home nextjs
@@ -90,7 +93,6 @@ RUN mkdir -p /app/data && chown nextjs:nodejs /app/data
 USER nextjs
 
 EXPOSE 3000
-EXPOSE 5173
 
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"

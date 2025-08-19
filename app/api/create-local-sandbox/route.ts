@@ -1,16 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { spawn, exec } from 'child_process';
-import { promises as fs } from 'fs';
-import path from 'path';
-import { promisify } from 'util';
 import type { SandboxState } from '@/types/sandbox';
-import { appConfig } from '@/config/app.config';
+import { sandboxClient } from '@/lib/sandbox-client';
 
-const execAsync = promisify(exec);
-
-// Store active sandbox info globally
+// Store active sandbox info globally (for compatibility)
 declare global {
-  var activeSandbox: any;
   var sandboxData: any;
   var existingFiles: Set<string>;
   var sandboxState: SandboxState;
@@ -23,339 +16,64 @@ function generateSandboxId(): string {
 
 export async function POST(request: NextRequest) {
   try {
-    // Check if we're restoring an existing sandbox
+    console.log('[create-local-sandbox] Using containerized sandbox service');
+    
+    // Parse request body
     const body = await request.json().catch(() => ({}));
     const existingSandboxId = body.existingSandboxId;
+    const sourceUrl = body.sourceUrl || 'sandbox-app';
+    
+    let sandboxId: string;
+    let sandboxUrl: string;
     
     if (existingSandboxId) {
-      console.log('[create-local-sandbox] Restoring existing sandbox:', existingSandboxId);
+      console.log('[create-local-sandbox] Validating existing sandbox:', existingSandboxId);
       
-      // Check if the sandbox directory exists
-      const existingSandboxPath = path.join(process.cwd(), appConfig.sandbox.baseDir, existingSandboxId);
+      // First validate that the sandbox actually exists
+      const validationResult = await sandboxClient.validateSandbox(existingSandboxId);
       
-      try {
-        const stats = await fs.stat(existingSandboxPath);
-        if (stats.isDirectory()) {
-          // Sandbox exists, start Vite server for it
-          console.log('[create-local-sandbox] Found existing sandbox at:', existingSandboxPath);
-          
-          // Kill existing processes if any
-          if (global.activeSandbox?.viteProcess) {
-            console.log('[create-local-sandbox] Killing existing Vite process...');
-            try {
-              global.activeSandbox.viteProcess.kill('SIGTERM');
-            } catch (e) {
-              console.error('Failed to kill existing Vite process:', e);
-            }
-            global.activeSandbox = null;
-          }
-          
-          // Start Vite dev server for the existing sandbox
-          const viteProcess = spawn('npm', ['run', 'dev'], {
-            cwd: existingSandboxPath,
-            stdio: ['inherit', 'pipe', 'pipe'],
-            env: { ...process.env, FORCE_COLOR: '0' }
-          });
-
-          // Wait for Vite to start
-          await new Promise((resolve) => {
-            const timeout = setTimeout(resolve, appConfig.sandbox.viteStartupDelay);
-            
-            viteProcess.stdout?.on('data', (data) => {
-              const output = data.toString();
-              console.log('[vite restore]', output);
-              if (output.includes('Local:') || output.includes('ready')) {
-                clearTimeout(timeout);
-                resolve(undefined);
-              }
-            });
-            
-            viteProcess.stderr?.on('data', (data) => {
-              console.error('[vite restore error]', data.toString());
-            });
-          });
-          
-          // Restore global sandbox state
-          const sandboxUrl = `http://localhost:${appConfig.sandbox.vitePort}`;
-          
-          global.activeSandbox = {
-            viteProcess,
-            sandboxPath: existingSandboxPath,
-            sandboxId: existingSandboxId
-          };
-          
-          global.sandboxData = {
-            sandboxId: existingSandboxId,
-            url: sandboxUrl,
-            id: existingSandboxId
-          };
-          
-          // Initialize sandbox state
-          global.sandboxState = {
-            fileCache: {
-              files: {},
-              lastSync: Date.now(),
-              sandboxId: existingSandboxId
-            },
-            sandbox: global.activeSandbox,
-            sandboxData: global.sandboxData
-          };
-          
-          console.log('[create-local-sandbox] Existing sandbox restored at:', sandboxUrl);
-          
-          return NextResponse.json({
-            success: true,
-            sandboxId: existingSandboxId,
-            url: sandboxUrl,
-            message: 'Existing sandbox restored and Vite server started'
-          });
-        }
-      } catch (error) {
-        console.warn('[create-local-sandbox] Existing sandbox not found or invalid:', error);
-        // Fall through to create new sandbox
+      if (!validationResult.exists) {
+        return NextResponse.json(
+          { 
+            success: false,
+            error: `Sandbox ${existingSandboxId} does not exist`,
+            code: 'SANDBOX_NOT_FOUND'
+          },
+          { status: 404 }
+        );
       }
-    }
-    
-    console.log('[create-local-sandbox] Creating new local folder sandbox...');
-    
-    // Kill existing processes if any
-    if (global.activeSandbox?.viteProcess) {
-      console.log('[create-local-sandbox] Killing existing Vite process...');
-      try {
-        global.activeSandbox.viteProcess.kill('SIGTERM');
-      } catch (e) {
-        console.error('Failed to kill existing Vite process:', e);
-      }
-      global.activeSandbox = null;
-    }
-    
-    // Clear existing files tracking
-    if (global.existingFiles) {
-      global.existingFiles.clear();
+      
+      console.log('[create-local-sandbox] Restoring validated sandbox:', existingSandboxId);
+      sandboxId = existingSandboxId;
+      sandboxUrl = sandboxClient.getPublicSandboxUrl(sandboxId);
     } else {
-      global.existingFiles = new Set<string>();
-    }
-
-    // Create unique sandbox directory
-    const sandboxId = generateSandboxId();
-    const sandboxPath = path.join(process.cwd(), appConfig.sandbox.baseDir, sandboxId);
-    
-    console.log(`[create-local-sandbox] Creating sandbox directory: ${sandboxPath}`);
-    await fs.mkdir(sandboxPath, { recursive: true });
-    await fs.mkdir(path.join(sandboxPath, 'src'), { recursive: true });
-
-    // Create package.json
-    const packageJson = {
-      name: "sandbox-app",
-      version: "1.0.0",
-      type: "module",
-      scripts: {
-        dev: `vite --host 0.0.0.0 --port ${appConfig.sandbox.vitePort}`,
-        build: "vite build",
-        preview: "vite preview"
-      },
-      dependencies: {
-        react: "^18.2.0",
-        "react-dom": "^18.2.0"
-      },
-      devDependencies: {
-        "@vitejs/plugin-react": "^4.0.0",
-        vite: "^4.3.9",
-        tailwindcss: "^3.3.0",
-        postcss: "^8.4.31",
-        autoprefixer: "^10.4.16"
+      // Create new sandbox
+      sandboxId = generateSandboxId();
+      console.log('[create-local-sandbox] Creating new sandbox:', sandboxId);
+      
+      // Use containerized sandbox service
+      const result = await sandboxClient.createSandbox(sandboxId, sourceUrl);
+      
+      if (!result.success) {
+        throw new Error(result.message || 'Failed to create sandbox in container');
       }
-    };
-
-    await fs.writeFile(
-      path.join(sandboxPath, 'package.json'),
-      JSON.stringify(packageJson, null, 2)
-    );
-
-    // Create vite.config.js
-    const viteConfig = `import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
-
-export default defineConfig({
-  plugins: [react()],
-  server: {
-    host: '0.0.0.0',
-    port: ${appConfig.sandbox.vitePort},
-    strictPort: true,
-    hmr: false, // Disable HMR in sandbox environment
-    allowedHosts: 'all'
-  }
-})`;
-
-    await fs.writeFile(path.join(sandboxPath, 'vite.config.js'), viteConfig);
-
-    // Create tailwind.config.js
-    const tailwindConfig = `/** @type {import('tailwindcss').Config} */
-export default {
-  content: [
-    "./index.html",
-    "./src/**/*.{js,ts,jsx,tsx}",
-  ],
-  theme: {
-    extend: {},
-  },
-  plugins: [],
-}`;
-
-    await fs.writeFile(path.join(sandboxPath, 'tailwind.config.js'), tailwindConfig);
-
-    // Create postcss.config.js
-    const postcssConfig = `export default {
-  plugins: {
-    tailwindcss: {},
-    autoprefixer: {},
-  },
-}`;
-
-    await fs.writeFile(path.join(sandboxPath, 'postcss.config.js'), postcssConfig);
-
-    // Create index.html
-    const indexHtml = `<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Sandbox App</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
-</html>`;
-
-    await fs.writeFile(path.join(sandboxPath, 'index.html'), indexHtml);
-
-    // Create src/main.jsx
-    const mainJsx = `import React from 'react'
-import ReactDOM from 'react-dom/client'
-import App from './App.jsx'
-import './index.css'
-
-ReactDOM.createRoot(document.getElementById('root')).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
-)`;
-
-    await fs.writeFile(path.join(sandboxPath, 'src', 'main.jsx'), mainJsx);
-
-    // Create src/App.jsx
-    const appJsx = `function App() {
-  return (
-    <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center p-4">
-      <div className="text-center max-w-2xl">
-        <p className="text-lg text-gray-400">
-          Local Sandbox Ready<br/>
-          Start building your React app with Vite and Tailwind CSS!
-        </p>
-      </div>
-    </div>
-  )
-}
-
-export default App`;
-
-    await fs.writeFile(path.join(sandboxPath, 'src', 'App.jsx'), appJsx);
-
-    // Create src/index.css
-    const indexCss = `@tailwind base;
-@tailwind components;
-@tailwind utilities;
-
-@layer base {
-  :root {
-    font-synthesis: none;
-    text-rendering: optimizeLegibility;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-    -webkit-text-size-adjust: 100%;
-  }
-  
-  * {
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
-  }
-}
-
-body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-  background-color: rgb(17 24 39);
-}`;
-
-    await fs.writeFile(path.join(sandboxPath, 'src', 'index.css'), indexCss);
-
-    console.log('[create-local-sandbox] Installing dependencies...');
-    
-    // Install dependencies
-    try {
-      await execAsync('NODE_ENV=development npm install', { 
-        cwd: sandboxPath,
-        timeout: 120000 // 2 minute timeout for safety
-      });
-      console.log('[create-local-sandbox] Dependencies installed successfully');
-    } catch (error) {
-      console.warn('[create-local-sandbox] npm install had issues:', error);
-      // Continue anyway as it might still work
+      
+      sandboxUrl = sandboxClient.getPublicSandboxUrl(sandboxId);
     }
-
-    console.log('[create-local-sandbox] Starting Vite dev server...');
     
-    // Start Vite dev server
-    const viteProcess = spawn('npm', ['run', 'dev'], {
-      cwd: sandboxPath,
-      stdio: ['inherit', 'pipe', 'pipe'],
-      env: { ...process.env, FORCE_COLOR: '0' }
-    });
-
-    // Wait for Vite to start
-    await new Promise((resolve) => {
-      const timeout = setTimeout(resolve, appConfig.sandbox.viteStartupDelay);
-      
-      viteProcess.stdout?.on('data', (data) => {
-        const output = data.toString();
-        console.log('[vite]', output);
-        if (output.includes('Local:') || output.includes('ready')) {
-          clearTimeout(timeout);
-          resolve(undefined);
-        }
-      });
-      
-      viteProcess.stderr?.on('data', (data) => {
-        console.error('[vite error]', data.toString());
-      });
-    });
-
-    // Store sandbox info globally
-    const sandboxUrl = `http://localhost:${appConfig.sandbox.vitePort}`;
-    
-    global.activeSandbox = {
-      viteProcess,
-      sandboxPath,
-      sandboxId
-    };
-    
+    // Set up global state for compatibility with existing code
     global.sandboxData = {
       sandboxId,
       url: sandboxUrl,
       id: sandboxId
     };
     
-    // Initialize sandbox state
-    global.sandboxState = {
-      fileCache: {
-        files: {},
-        lastSync: Date.now(),
-        sandboxId
-      },
-      sandbox: global.activeSandbox,
-      sandboxData: global.sandboxData
-    };
+    // Initialize file tracking
+    if (!global.existingFiles) {
+      global.existingFiles = new Set<string>();
+    } else {
+      global.existingFiles.clear();
+    }
     
     // Track initial files
     global.existingFiles.add('src/App.jsx');
@@ -367,21 +85,32 @@ body {
     global.existingFiles.add('tailwind.config.js');
     global.existingFiles.add('postcss.config.js');
     
-    console.log('[create-local-sandbox] Local sandbox ready at:', sandboxUrl);
+    // Initialize sandbox state
+    global.sandboxState = {
+      fileCache: {
+        files: {},
+        lastSync: Date.now(),
+        sandboxId
+      },
+      sandbox: { sandboxId },
+      sandboxData: global.sandboxData
+    };
+    
+    console.log('[create-local-sandbox] Containerized sandbox ready at:', sandboxUrl);
     
     return NextResponse.json({
       success: true,
       sandboxId,
       url: sandboxUrl,
-      message: 'Local sandbox created and Vite React app initialized'
+      message: 'Containerized sandbox created successfully'
     });
-
+    
   } catch (error) {
     console.error('[create-local-sandbox] Error:', error);
     
     return NextResponse.json(
       { 
-        error: error instanceof Error ? error.message : 'Failed to create local sandbox',
+        error: error instanceof Error ? error.message : 'Failed to create containerized sandbox',
         details: error instanceof Error ? error.stack : undefined
       },
       { status: 500 }

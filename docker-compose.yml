@@ -7,12 +7,13 @@ services:
       target: runner
     ports:
       - "3001:3000"  # Map external port 3001 to internal port 3000
-      - "5173:5173"  # Vite dev server port for sandboxes
     environment:
       - NODE_ENV=production
       - NEXT_TELEMETRY_DISABLED=1
       - NODE_OPTIONS=--max-old-space-size=4096
       - FIRECRAWL_API_URL=http://firecrawl-api:3002
+      - SANDBOX_SERVICE_URL=http://sandbox-service:3004
+      - SANDBOX_PUBLIC_URL=http://localhost:3004
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/api/test-endpoint"]
@@ -25,6 +26,29 @@ services:
       - ./data:/app/data  # Persistent data storage
     depends_on:
       - firecrawl-api
+      - sandbox-service
+    networks:
+      - lovable-network
+
+  # Containerized Sandbox Service
+  sandbox-service:
+    build:
+      context: ./services/sandbox-service
+      dockerfile: Dockerfile
+    ports:
+      - "3004:3004"  # Sandbox management API
+    environment:
+      - NODE_ENV=production
+      - PORT=3004
+    restart: unless-stopped
+    volumes:
+      - sandbox-data:/app/sandboxes  # Persistent sandbox storage
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3004/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     networks:
       - lovable-network
 
@@ -104,6 +128,7 @@ services:
 
 volumes:
   firecrawl-data:
+  sandbox-data:
 
 networks:
   lovable-network:

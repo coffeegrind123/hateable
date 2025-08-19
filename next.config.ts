@@ -1,9 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // Enable standalone output for production Docker builds but disable tracing
+  // Enable standalone output for production Docker builds
   output: 'standalone',
-  outputFileTracing: false,
   
   // Optimize for production
   compress: true,

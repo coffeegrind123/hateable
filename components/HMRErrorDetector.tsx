@@ -5,9 +5,10 @@ interface HMRErrorDetectorProps {
   onErrorDetected: (errors: Array<{ type: string; message: string; package?: string }>) => void;
   sandboxId?: string;
   autoFixEnabled?: boolean;
+  customEndpoint?: any;
 }
 
-export default function HMRErrorDetector({ iframeRef, onErrorDetected, sandboxId, autoFixEnabled = true }: HMRErrorDetectorProps) {
+export default function HMRErrorDetector({ iframeRef, onErrorDetected, sandboxId, autoFixEnabled = true, customEndpoint }: HMRErrorDetectorProps) {
   const checkIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
@@ -37,7 +38,7 @@ export default function HMRErrorDetector({ iframeRef, onErrorDetected, sandboxId
                 
                 // Attempt auto-fix if enabled
                 if (autoFixEnabled && sandboxId) {
-                  autoFixMissingComponent(sandboxId, importPath, fromFile, errorText);
+                  autoFixMissingComponent(sandboxId, importPath, fromFile, errorText, customEndpoint);
                 }
                 
                 onErrorDetected([{
@@ -67,7 +68,7 @@ export default function HMRErrorDetector({ iframeRef, onErrorDetected, sandboxId
             const syntaxMatch = errorText.match(/SyntaxError|Unexpected token/);
             if (syntaxMatch && autoFixEnabled && sandboxId) {
               console.log('[HMRErrorDetector] Detected syntax error, attempting auto-fix');
-              autoFixSyntaxError(sandboxId, errorText);
+              autoFixSyntaxError(sandboxId, errorText, customEndpoint);
             }
           }
         }
@@ -91,7 +92,7 @@ export default function HMRErrorDetector({ iframeRef, onErrorDetected, sandboxId
 }
 
 // Auto-fix functions
-async function autoFixMissingComponent(sandboxId: string, importPath: string, fromFile: string, errorText: string) {
+async function autoFixMissingComponent(sandboxId: string, importPath: string, fromFile: string, errorText: string, customEndpoint?: any) {
   try {
     console.log('[HMRErrorDetector] Attempting to auto-fix missing component:', importPath);
     
@@ -105,7 +106,8 @@ async function autoFixMissingComponent(sandboxId: string, importPath: string, fr
           type: 'missing-import',
           importPath,
           fromFile
-        }
+        },
+        customEndpoint
       })
     });
     
@@ -121,7 +123,7 @@ async function autoFixMissingComponent(sandboxId: string, importPath: string, fr
   }
 }
 
-async function autoFixSyntaxError(sandboxId: string, errorText: string) {
+async function autoFixSyntaxError(sandboxId: string, errorText: string, customEndpoint?: any) {
   try {
     console.log('[HMRErrorDetector] Attempting to auto-fix syntax error');
     
@@ -133,7 +135,8 @@ async function autoFixSyntaxError(sandboxId: string, errorText: string) {
         error: {
           message: errorText,
           type: 'syntax-error'
-        }
+        },
+        customEndpoint
       })
     });
     

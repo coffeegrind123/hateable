@@ -1,6 +1,6 @@
 import { FileManifest, EditIntent, EditType } from '@/types/file-manifest';
 import { analyzeEditIntent } from '@/lib/edit-intent-analyzer';
-import { getEditExamplesPrompt, getComponentPatternPrompt } from '@/lib/edit-examples';
+import { getEditExamplesPrompt, getComponentPatternPrompt, getEditInstructions, getFileStructureOverviewPrompt } from '@/lib/prompt-loader';
 
 export interface FileContext {
   primaryFiles: string[]; // Files to edit
@@ -149,102 +149,19 @@ function buildFileStructureSection(manifest: FileManifest): string {
       type: info.type,
     }));
   
-  return `## 🚨 EXISTING PROJECT FILES - DO NOT CREATE NEW FILES WITH SIMILAR NAMES 🚨
-
-### ALL PROJECT FILES (${allFiles.length} files)
-\`\`\`
-${allFiles.join('\n')}
-\`\`\`
-
-### Component Files (USE THESE EXACT NAMES)
-${componentFiles.map(f => 
-  `- ${f.name} → ${f.path} (${f.type})`
-).join('\n')}
-
-### CRITICAL: Component Relationships
-**ALWAYS CHECK App.jsx FIRST** to understand what components exist and how they're imported!
-
-Common component overlaps to watch for:
-- "nav" or "navigation" → Often INSIDE Header.jsx, not a separate file
-- "menu" → Usually part of Header/Nav, not separate
-- "logo" → Typically in Header, not standalone
-
-When user says "nav" or "navigation":
-1. First check if Header.jsx exists
-2. Look inside Header.jsx for navigation elements
-3. Only create Nav.jsx if navigation doesn't exist anywhere
-
-Entry Point: ${manifest.entryPoint}
-
-### Routes
-${manifest.routes.map(r => 
-  `- ${r.path} → ${r.component.split('/').pop()}`
-).join('\n') || 'No routes detected'}`;
+  return getFileStructureOverviewPrompt(
+    allFiles,
+    componentFiles,
+    manifest.entryPoint,
+    manifest.routes
+  );
 }
 
 /**
  * Build edit-type specific instructions
  */
 function buildEditInstructions(editType: EditType): string {
-  const instructions: Record<EditType, string> = {
-    [EditType.UPDATE_COMPONENT]: `## SURGICAL EDIT INSTRUCTIONS
-- You MUST preserve 99% of the original code
-- ONLY edit the specific component(s) mentioned
-- Make ONLY the minimal change requested
-- DO NOT rewrite or refactor unless explicitly asked
-- DO NOT remove any existing code unless explicitly asked
-- DO NOT change formatting or structure
-- Preserve all imports and exports
-- Maintain the existing code style
-- Return the COMPLETE file with the surgical change applied
-- Think of yourself as a surgeon making a precise incision, not an artist repainting`,
-    
-    [EditType.ADD_FEATURE]: `## Instructions
-- Create new components in appropriate directories
-- IMPORTANT: Update parent components to import and use the new component
-- Update routing if adding new pages
-- Follow existing patterns and conventions
-- Add necessary styles to match existing design
-- Example workflow:
-  1. Create NewComponent.jsx
-  2. Import it in the parent: import NewComponent from './NewComponent'
-  3. Use it in the parent's render: <NewComponent />`,
-    
-    [EditType.FIX_ISSUE]: `## Instructions
-- Identify and fix the specific issue
-- Test the fix doesn't break other functionality
-- Preserve existing behavior except for the bug
-- Add error handling if needed`,
-    
-    [EditType.UPDATE_STYLE]: `## SURGICAL STYLE EDIT INSTRUCTIONS
-- Change ONLY the specific style/class mentioned
-- If user says "change background to blue", change ONLY the background class
-- DO NOT touch any other styles, classes, or attributes
-- DO NOT refactor or "improve" the styling
-- DO NOT change the component structure
-- Preserve ALL other classes and styles exactly as they are
-- Return the COMPLETE file with only the specific style change`,
-    
-    [EditType.REFACTOR]: `## Instructions
-- Improve code quality without changing functionality
-- Follow project conventions
-- Maintain all existing features
-- Improve readability and maintainability`,
-    
-    [EditType.FULL_REBUILD]: `## Instructions
-- You may rebuild the entire application
-- Keep the same core functionality
-- Improve upon the existing design
-- Use modern best practices`,
-    
-    [EditType.ADD_DEPENDENCY]: `## Instructions
-- Update package.json with new dependency
-- Add necessary import statements
-- Configure the dependency if needed
-- Update any build configuration`,
-  };
-  
-  return instructions[editType] || instructions[EditType.UPDATE_COMPONENT];
+  return getEditInstructions(editType);
 }
 
 /**
