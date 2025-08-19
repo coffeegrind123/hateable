@@ -663,8 +663,16 @@ Tip: I automatically detect and install npm packages from your code imports (lik
       checkSandboxStatus();
     };
     
+    // Periodic status check every 30 seconds
+    const statusInterval = setInterval(() => {
+      checkSandboxStatus();
+    }, 30000);
+    
     window.addEventListener('focus', handleFocus);
-    return () => window.removeEventListener('focus', handleFocus);
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      clearInterval(statusInterval);
+    };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -762,12 +770,33 @@ Tip: I automatically detect and install npm packages from your code imports (lik
   };
 
   const checkSandboxStatus = async () => {
-    // For containerized sandboxes, status is managed by the sandbox service
-    // and tracked via sandboxData state - no need for separate status checking
-    if (sandboxData) {
-      updateStatus('Sandbox active', true);
-    } else {
-      updateStatus('No sandbox', false);
+    try {
+      const response = await fetch('/api/sandbox-status');
+      const data = await response.json();
+      
+      if (data.success && data.active && data.healthy) {
+        // Update local state if we have a healthy sandbox but local state is missing
+        if (!sandboxData && data.sandboxData) {
+          setSandboxData(data.sandboxData);
+        }
+        updateStatus('Sandbox active', true);
+      } else if (data.active && !data.healthy) {
+        updateStatus('Sandbox unhealthy', false);
+      } else {
+        // Clear local sandbox data if no active sandbox found
+        if (sandboxData) {
+          setSandboxData(null);
+        }
+        updateStatus('No sandbox', false);
+      }
+    } catch (error) {
+      console.error('Failed to check sandbox status:', error);
+      // Fallback to checking local state only
+      if (sandboxData) {
+        updateStatus('Sandbox active', true);
+      } else {
+        updateStatus('No sandbox', false);
+      }
     }
   };
 

@@ -68,6 +68,17 @@ export async function POST(request: NextRequest) {
       id: sandboxId
     };
     
+    // Set activeSandbox to indicate a sandbox is running
+    const path = require('path');
+    const sandboxPath = path.join(process.cwd(), 'sandboxes', sandboxId);
+    
+    global.activeSandbox = {
+      sandboxId,
+      sandboxPath: sandboxPath,
+      url: sandboxUrl,
+      containerized: true
+    };
+    
     // Initialize file tracking
     if (!global.existingFiles) {
       global.existingFiles = new Set<string>();

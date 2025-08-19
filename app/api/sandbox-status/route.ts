@@ -16,13 +16,26 @@ export async function GET() {
     
     if (sandboxExists && global.activeSandbox) {
       try {
-        // Since Python isn't available in the Vite template, just check if sandbox exists
-        // The sandbox object existing is enough to confirm it's healthy
-        sandboxHealthy = true;
+        // For containerized sandboxes, check if the directory exists and has content
+        if (global.activeSandbox.containerized) {
+          const fs = require('fs');
+          const path = require('path');
+          
+          const sandboxPath = global.activeSandbox.sandboxPath;
+          const packageJsonPath = path.join(sandboxPath, 'package.json');
+          
+          // Check if sandbox directory and core files exist
+          sandboxHealthy = fs.existsSync(sandboxPath) && fs.existsSync(packageJsonPath);
+        } else {
+          // For legacy sandboxes, just check if sandbox object exists
+          sandboxHealthy = true;
+        }
+        
         sandboxInfo = {
           sandboxId: global.sandboxData?.sandboxId,
           url: global.sandboxData?.url,
           filesTracked: global.existingFiles ? Array.from(global.existingFiles) : [],
+          containerized: global.activeSandbox.containerized || false,
           lastHealthCheck: new Date().toISOString()
         };
       } catch (error) {
