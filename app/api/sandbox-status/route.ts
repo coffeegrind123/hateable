@@ -16,16 +16,25 @@ export async function GET() {
     
     if (sandboxExists && global.activeSandbox) {
       try {
-        // For containerized sandboxes, check if the directory exists and has content
+        // For containerized sandboxes, check if the sandbox service is responding
         if (global.activeSandbox.containerized) {
-          const fs = require('fs');
-          const path = require('path');
-          
-          const sandboxPath = global.activeSandbox.sandboxPath;
-          const packageJsonPath = path.join(sandboxPath, 'package.json');
-          
-          // Check if sandbox directory and core files exist
-          sandboxHealthy = fs.existsSync(sandboxPath) && fs.existsSync(packageJsonPath);
+          try {
+            // Check if sandbox service is responding by making a simple request
+            const sandboxUrl = global.sandboxData?.url;
+            if (sandboxUrl) {
+              // Try to reach the sandbox service health endpoint
+              const healthResponse = await fetch(`http://host.docker.internal:3004/health`, {
+                method: 'GET',
+                signal: AbortSignal.timeout(2000) // 2 second timeout
+              });
+              sandboxHealthy = healthResponse.ok;
+            } else {
+              sandboxHealthy = false;
+            }
+          } catch (error) {
+            console.log('[sandbox-status] Sandbox service health check failed:', error.message);
+            sandboxHealthy = false;
+          }
         } else {
           // For legacy sandboxes, just check if sandbox object exists
           sandboxHealthy = true;
