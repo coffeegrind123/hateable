@@ -20,11 +20,40 @@ async function fixErrorWithLLM(sandboxId: string, error: any, customEndpoint?: a
     const fileContent = await fs.readFile(filePath, 'utf8');
     
     // Create LLM prompt to fix the error
-    const fixPrompt = `Fix this React/JavaScript error automatically:
+    const errorType = error.type || 'unknown';
+    let fixPrompt = '';
+    
+    if (errorType === 'tailwind-css-error') {
+      fixPrompt = `Fix this Tailwind CSS error automatically:
+
+ERROR: ${error.message}
+INVALID CLASS: ${error.invalidClass}
+FILE: ${fileName}
+
+CURRENT FILE CONTENT:
+${fileContent}
+
+INSTRUCTIONS:
+1. Replace the invalid Tailwind CSS class "${error.invalidClass}" with a valid equivalent
+2. Choose the closest valid Tailwind class that maintains the design intent
+3. Consider the color scale (50, 100, 200, 300, 400, 500, 600, 700, 800, 900)
+4. If it's a custom color like gray-750, choose gray-700 or gray-800 as appropriate
+5. Maintain all other classes and functionality exactly as they are
+
+Return your response in this format:
+<fix>
+<action>modify</action>
+<file>${fileName}</file>
+<content>
+// Fixed file content with valid Tailwind classes
+</content>
+</fix>`;
+    } else {
+      fixPrompt = `Fix this React/JavaScript error automatically:
 
 ERROR: ${error.message}
 FILE: ${fileName}
-ERROR TYPE: ${error.type}
+ERROR TYPE: ${errorType}
 
 CURRENT FILE CONTENT:
 ${fileContent}
@@ -46,6 +75,7 @@ Return your response in this format:
 </fix>
 
 If multiple files need to be created/modified, use multiple <fix> blocks.`;
+    }
 
     // Use configured endpoint or fallback
     const apiUrl = customEndpoint?.url || 'http://host.docker.internal:8081/v1';
@@ -450,49 +480,15 @@ async function fixTailwindClassError(sandboxId: string, invalidClass: string, fi
   try {
     console.log(`[auto-fix-errors] Fixing Tailwind CSS class error: ${invalidClass} in ${filePath}`);
     
-    // Use the sandbox client to get the current file content
-    const { sandboxClient } = await import('@/lib/sandbox-client');
-    const filesResult = await sandboxClient.getFiles(sandboxId);
+    // Use LLM to intelligently fix the Tailwind error instead of hardcoded replacements
+    const errorData = {
+      type: 'tailwind-css-error',
+      message: fullErrorMessage,
+      invalidClass: invalidClass,
+      file: filePath
+    };
     
-    if (!filesResult.success || !filesResult.files[filePath]) {
-      throw new Error(`Could not read file ${filePath} from sandbox`);
-    }
-    
-    const currentContent = filesResult.files[filePath];
-    
-    // Fix common Tailwind class issues
-    let fixedContent = currentContent;
-    
-    // Replace invalid gray-750 with valid gray-700 or gray-800
-    if (invalidClass.includes('gray-750')) {
-      fixedContent = fixedContent.replace(/\b(hover:)?bg-gray-750\b/g, '$1bg-gray-700');
-      fixedContent = fixedContent.replace(/\b(hover:)?text-gray-750\b/g, '$1text-gray-300');
-      fixedContent = fixedContent.replace(/\b(hover:)?border-gray-750\b/g, '$1border-gray-700');
-    }
-    
-    // Replace other invalid classes with closest valid ones
-    fixedContent = fixedContent.replace(/\b(hover:)?bg-(\w+)-(\d{3,})\b/g, (match, hover, color, number) => {
-      const num = parseInt(number);
-      if (num > 900) return `${hover || ''}bg-${color}-900`;
-      if (num === 750) return `${hover || ''}bg-${color}-700`;
-      if (num === 850) return `${hover || ''}bg-${color}-800`;
-      return match;
-    });
-    
-    // Apply the fix
-    const applyResult = await sandboxClient.applyCode(sandboxId, [
-      { path: filePath, content: fixedContent }
-    ]);
-    
-    if (applyResult.success) {
-      return NextResponse.json({
-        success: true,
-        message: `Fixed Tailwind CSS class error: ${invalidClass}`,
-        appliedFixes: [filePath]
-      });
-    } else {
-      throw new Error(`Failed to apply Tailwind fix: ${applyResult.message}`);
-    }
+    return await fixErrorWithLLM(sandboxId, errorData);
     
   } catch (error) {
     console.error('[auto-fix-errors] Failed to fix Tailwind class error:', error);
