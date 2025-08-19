@@ -43,7 +43,11 @@ interface ChatMessage {
   };
 }
 
-function AISandboxPage() {
+interface AISandboxPageProps {
+  serverSearchParams: { [key: string]: string | string[] | undefined };
+}
+
+function AISandboxPage({ serverSearchParams }: AISandboxPageProps) {
   const [sandboxData, setSandboxData] = useState<SandboxData | null>(null);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState({ text: 'Not connected', active: false });
@@ -59,7 +63,17 @@ function AISandboxPage() {
   ]);
   const [aiChatInput, setAiChatInput] = useState('');
   const [aiEnabled] = useState(true);
-  const searchParams = useSearchParams();
+  // Create URLSearchParams from server-side searchParams for consistent API
+  const searchParams = new URLSearchParams(
+    Object.entries(serverSearchParams).reduce((acc, [key, value]) => {
+      if (typeof value === 'string') {
+        acc[key] = value;
+      } else if (Array.isArray(value)) {
+        acc[key] = value[0] || '';
+      }
+      return acc;
+    }, {} as Record<string, string>)
+  );
   const router = useRouter();
   const [customEndpoint, setCustomEndpoint] = useState(() => {
     const savedEndpoint = localStorage.getItem('customEndpoint');
@@ -4021,10 +4035,14 @@ Focus on the key sections and content, making it clean and modern.`;
   );
 }
 
-export default function Page() {
+interface PageProps {
+  searchParams: { [key: string]: string | string[] | undefined };
+}
+
+export default function Page({ searchParams }: PageProps) {
   return (
     <Suspense fallback={<div>Loading...</div>}>
-      <AISandboxPage />
+      <AISandboxPage serverSearchParams={searchParams} />
     </Suspense>
   );
 }
