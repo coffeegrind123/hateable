@@ -270,6 +270,19 @@ export async function POST(request: NextRequest) {
           }
         }
         
+        // Check for Tailwind CSS class errors
+        const tailwindErrorMatch = errorMessage.match(/The `([^`]+)` class does not exist/);
+        if (tailwindErrorMatch) {
+          const [, invalidClass] = tailwindErrorMatch;
+          console.log('[auto-fix-errors] Detected Tailwind CSS class error:', invalidClass);
+          
+          // Extract file path from error if available
+          const fileMatch = errorMessage.match(/file: ([^\s]+)/);
+          const filePath = fileMatch ? fileMatch[1].replace(/^.*\/sandboxes\/[^\/]+\//, '') : 'src/index.css';
+          
+          return await fixTailwindClassError(sandboxId, invalidClass, filePath, errorMessage);
+        }
+        
         // Check for other dependency-related error patterns
         const dependencyErrorPatterns = [
           /Cannot resolve module ['"]([^'"]+)['"]/,
@@ -429,6 +442,63 @@ async function fixMissingAsset(sandboxId: string, assetPath: string) {
     return NextResponse.json({
       success: false,
       error: `Failed to create asset: ${(error as Error).message}`
+    }, { status: 500 });
+  }
+}
+
+async function fixTailwindClassError(sandboxId: string, invalidClass: string, filePath: string, fullErrorMessage: string) {
+  try {
+    console.log(`[auto-fix-errors] Fixing Tailwind CSS class error: ${invalidClass} in ${filePath}`);
+    
+    // Use the sandbox client to get the current file content
+    const { sandboxClient } = await import('@/lib/sandbox-client');
+    const filesResult = await sandboxClient.getFiles(sandboxId);
+    
+    if (!filesResult.success || !filesResult.files[filePath]) {
+      throw new Error(`Could not read file ${filePath} from sandbox`);
+    }
+    
+    const currentContent = filesResult.files[filePath];
+    
+    // Fix common Tailwind class issues
+    let fixedContent = currentContent;
+    
+    // Replace invalid gray-750 with valid gray-700 or gray-800
+    if (invalidClass.includes('gray-750')) {
+      fixedContent = fixedContent.replace(/\b(hover:)?bg-gray-750\b/g, '$1bg-gray-700');
+      fixedContent = fixedContent.replace(/\b(hover:)?text-gray-750\b/g, '$1text-gray-300');
+      fixedContent = fixedContent.replace(/\b(hover:)?border-gray-750\b/g, '$1border-gray-700');
+    }
+    
+    // Replace other invalid classes with closest valid ones
+    fixedContent = fixedContent.replace(/\b(hover:)?bg-(\w+)-(\d{3,})\b/g, (match, hover, color, number) => {
+      const num = parseInt(number);
+      if (num > 900) return `${hover || ''}bg-${color}-900`;
+      if (num === 750) return `${hover || ''}bg-${color}-700`;
+      if (num === 850) return `${hover || ''}bg-${color}-800`;
+      return match;
+    });
+    
+    // Apply the fix
+    const applyResult = await sandboxClient.applyCode(sandboxId, [
+      { path: filePath, content: fixedContent }
+    ]);
+    
+    if (applyResult.success) {
+      return NextResponse.json({
+        success: true,
+        message: `Fixed Tailwind CSS class error: ${invalidClass}`,
+        appliedFixes: [filePath]
+      });
+    } else {
+      throw new Error(`Failed to apply Tailwind fix: ${applyResult.message}`);
+    }
+    
+  } catch (error) {
+    console.error('[auto-fix-errors] Failed to fix Tailwind class error:', error);
+    return NextResponse.json({
+      success: false,
+      error: `Failed to fix Tailwind class error: ${error instanceof Error ? error.message : 'Unknown error'}`
     }, { status: 500 });
   }
 }

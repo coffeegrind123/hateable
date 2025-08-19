@@ -123,7 +123,63 @@ export async function POST(request: NextRequest) {
         const result = await sandboxClient.applyCode(sandboxId, sandboxFiles);
         
         if (!result.success) {
-          throw new Error(result.message || 'Failed to apply code to sandbox container');
+          // Check if this is a build error that can be auto-fixed
+          if (result.error === 'BUILD_ERROR' && result.buildError) {
+            console.log('[apply-local-code-stream] Build error detected, triggering auto-fix...');
+            
+            await sendProgress({
+              type: 'status',
+              message: 'Build error detected, attempting automatic fix...'
+            });
+            
+            try {
+              // Call auto-fix system with structured error data
+              const autoFixResponse = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/auto-fix-errors`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  sandboxId: sandboxId,
+                  error: {
+                    type: 'build-error',
+                    message: result.buildError.stderr || result.buildError.stdout || result.message,
+                    command: result.buildError.command,
+                    files: parsed.files.map(f => ({ path: f.path, content: f.content }))
+                  }
+                })
+              });
+              
+              const autoFixResult = await autoFixResponse.json();
+              if (autoFixResult.success) {
+                await sendProgress({
+                  type: 'status',
+                  message: 'Auto-fix applied successfully, rebuilding...'
+                });
+                
+                // Try applying code again after auto-fix
+                const retryResult = await sandboxClient.applyCode(sandboxId, sandboxFiles);
+                if (retryResult.success) {
+                  await sendProgress({
+                    type: 'status',
+                    message: 'Build successful after auto-fix!'
+                  });
+                } else {
+                  throw new Error(`Auto-fix failed: ${retryResult.message}`);
+                }
+              } else {
+                throw new Error(`Auto-fix failed: ${autoFixResult.error}`);
+              }
+              
+            } catch (autoFixError) {
+              console.error('[apply-local-code-stream] Auto-fix failed:', autoFixError);
+              await sendProgress({
+                type: 'error',
+                message: `Build failed and auto-fix unsuccessful: ${result.message}`
+              });
+              throw new Error(`Build failed: ${result.message}. Auto-fix attempted but failed: ${autoFixError.message}`);
+            }
+          } else {
+            throw new Error(result.message || 'Failed to apply code to sandbox container');
+          }
         }
         
         // Track applied files

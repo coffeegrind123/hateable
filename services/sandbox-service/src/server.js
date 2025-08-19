@@ -633,17 +633,37 @@ app.post('/api/sandbox/:sandboxId/apply-code', async (req, res) => {
     
     // Rebuild
     console.log(`[sandbox-service] Rebuilding ${sandboxId}`);
-    await execAsync('pnpm run build', {
-      cwd: sandbox.sandboxPath,
-      timeout: 180000
-    });
-    
-    sandbox.lastAccessed = new Date();
-    
-    res.json({
-      success: true,
-      message: `Applied ${files.length} files and rebuilt successfully`
-    });
+    try {
+      await execAsync('pnpm run build', {
+        cwd: sandbox.sandboxPath,
+        timeout: 180000
+      });
+      
+      sandbox.lastAccessed = new Date();
+      
+      res.json({
+        success: true,
+        message: `Applied ${files.length} files and rebuilt successfully`
+      });
+      
+    } catch (buildError) {
+      console.error(`[sandbox-service] Build failed for ${sandboxId}:`, buildError);
+      
+      // Return structured error for auto-fix system
+      res.status(500).json({
+        success: false,
+        error: 'BUILD_ERROR',
+        message: `Build failed: ${buildError.message}`,
+        buildError: {
+          command: 'pnpm run build',
+          stderr: buildError.stderr || '',
+          stdout: buildError.stdout || '',
+          code: buildError.code
+        },
+        sandboxId: sandboxId
+      });
+      return;
+    }
     
   } catch (error) {
     console.error(`[sandbox-service] Error applying code:`, error);
