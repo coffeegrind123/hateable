@@ -91,6 +91,35 @@ class SandboxServiceClient {
   }
 
   /**
+   * Get all files from a sandbox
+   */
+  async getFiles(sandboxId: string): Promise<{ success: boolean; files: Record<string, string>; manifest: any }> {
+    try {
+      console.log(`[sandbox-client] Getting files from sandbox ${sandboxId}`);
+      
+      const response = await fetch(`${this.baseUrl}/api/sandbox/${sandboxId}/files`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
+        throw new Error(errorData.error || `Failed to get files: ${response.status}`);
+      }
+
+      const data = await response.json();
+      console.log(`[sandbox-client] Retrieved ${Object.keys(data.files || {}).length} files from ${sandboxId}`);
+      
+      return data;
+    } catch (error) {
+      console.error(`[sandbox-client] Error getting files:`, error);
+      throw error;
+    }
+  }
+
+  /**
    * Get sandbox URL for serving files
    */
   getSandboxUrl(sandboxId: string): string {

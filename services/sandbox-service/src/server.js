@@ -29,6 +29,72 @@ app.use(express.json({ limit: '50mb' }));
 const activeSandboxes = new Map();
 const buildQueue = new Map();
 
+// Helper function to get files recursively
+async function getFilesRecursively(dirPath, basePath) {
+  const files = {};
+  
+  try {
+    const entries = await fs.readdir(dirPath, { withFileTypes: true });
+    
+    for (const entry of entries) {
+      const fullPath = path.join(dirPath, entry.name);
+      const relativePath = path.relative(basePath, fullPath);
+      
+      // Skip node_modules, .git, and other build artifacts
+      if (entry.name === 'node_modules' || 
+          entry.name === '.git' || 
+          entry.name === 'dist' || 
+          entry.name === 'build' ||
+          entry.name.startsWith('.')) {
+        continue;
+      }
+      
+      if (entry.isDirectory()) {
+        const subFiles = await getFilesRecursively(fullPath, basePath);
+        Object.assign(files, subFiles);
+      } else if (entry.isFile()) {
+        // Only include common text files
+        const ext = path.extname(entry.name).toLowerCase();
+        if (['.js', '.jsx', '.ts', '.tsx', '.json', '.css', '.html', '.md', '.txt'].includes(ext)) {
+          try {
+            const content = await fs.readFile(fullPath, 'utf-8');
+            files[relativePath.replace(/\\/g, '/')] = content;
+          } catch (readError) {
+            console.warn(`Could not read file ${relativePath}:`, readError);
+          }
+        }
+      }
+    }
+  } catch (error) {
+    console.error(`Error reading directory ${dirPath}:`, error);
+  }
+  
+  return files;
+}
+
+// Helper function to generate file manifest
+function generateFileManifest(files) {
+  const manifest = {
+    files: {},
+    structure: {},
+    lastSync: Date.now()
+  };
+  
+  for (const [filePath, content] of Object.entries(files)) {
+    manifest.files[filePath] = {
+      size: content.length,
+      lastModified: Date.now(),
+      type: path.extname(filePath) || 'file',
+      componentInfo: filePath.endsWith('.jsx') || filePath.endsWith('.tsx') ? {
+        name: path.basename(filePath, path.extname(filePath)),
+        isComponent: true
+      } : undefined
+    };
+  }
+  
+  return manifest;
+}
+
 // Function to load existing sandboxes from disk on startup
 async function loadExistingSandboxes() {
   console.log('[sandbox-service] Starting loadExistingSandboxes function...');
@@ -609,6 +675,42 @@ app.get('/api/sandbox/:sandboxId/info', (req, res) => {
     lastAccessed: sandbox.lastAccessed,
     buildPath: sandbox.buildPath
   });
+});
+
+// Get all files from a sandbox
+app.get('/api/sandbox/:sandboxId/files', async (req, res) => {
+  try {
+    const { sandboxId } = req.params;
+    console.log(`[sandbox-service] Files endpoint hit for ${sandboxId}`);
+    
+    const sandbox = activeSandboxes.get(sandboxId);
+    if (!sandbox) {
+      console.log(`[sandbox-service] Sandbox ${sandboxId} not found in registry`);
+      return res.status(404).json({ error: 'Sandbox not found' });
+    }
+    
+    // Update last accessed time
+    sandbox.lastAccessed = new Date();
+    
+    const sandboxPath = `/app/sandboxes/${sandboxId}`;
+    
+    // Get all files recursively
+    const files = await getFilesRecursively(sandboxPath, sandboxPath);
+    const manifest = generateFileManifest(files);
+    
+    console.log(`[sandbox-service] Retrieved ${Object.keys(files).length} files from ${sandboxId}`);
+    
+    res.json({
+      success: true,
+      files,
+      manifest,
+      sandboxId
+    });
+    
+  } catch (error) {
+    console.error(`[sandbox-service] Error getting files for ${req.params.sandboxId}:`, error);
+    res.status(500).json({ error: 'Failed to get sandbox files' });
+  }
 });
 
 // Root sandbox access (serves index.html)
