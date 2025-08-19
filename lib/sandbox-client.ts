@@ -77,6 +77,20 @@ class SandboxServiceClient {
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
+        
+        // For BUILD_ERROR, return the full error response instead of throwing
+        if (errorData.error === 'BUILD_ERROR') {
+          console.log(`[sandbox-client] Build error occurred, returning structured error response`);
+          return {
+            success: false,
+            error: errorData.error,
+            message: errorData.message,
+            buildError: errorData.buildError,
+            sandboxId: errorData.sandboxId
+          };
+        }
+        
+        // For other errors, throw as before
         throw new Error(errorData.error || `Failed to apply code: ${response.status}`);
       }
 
