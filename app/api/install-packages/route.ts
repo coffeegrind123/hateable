@@ -1,8 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { exec } from 'child_process';
-import { promisify } from 'util';
-
-const execAsync = promisify(exec);
+import { sandboxClient } from '@/lib/sandbox-client';
 
 declare global {
   var activeSandbox: any;
@@ -27,7 +24,7 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
 
-    const sandboxPath = global.activeSandbox.sandboxPath;
+    const activeSandboxId = global.activeSandbox.sandboxId;
     
     // Validate and deduplicate package names
     const validPackages = packages
@@ -42,39 +39,37 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
 
-    console.log('[install-packages] Installing packages in local sandbox:', validPackages);
-    console.log('[install-packages] Sandbox path:', sandboxPath);
+    console.log('[install-packages] Installing packages in containerized sandbox:', validPackages);
+    console.log('[install-packages] Sandbox ID:', activeSandboxId);
 
-    try {
-      const installCommand = `npm install ${validPackages.join(' ')}`;
-      const { stdout, stderr } = await execAsync(installCommand, {
-        cwd: sandboxPath,
-        timeout: 120000 // 2 minute timeout
-      });
+    // For containerized sandboxes, use the sandbox client
+    if (global.activeSandbox.containerized) {
+      try {
+        const result = await sandboxClient.installPackages(activeSandboxId, validPackages);
+        
+        return NextResponse.json({
+          success: result.success,
+          packages: validPackages,
+          message: result.message,
+          installedPackages: result.installedPackages || validPackages
+        });
 
-      console.log('[install-packages] Installation completed');
-      if (stdout) console.log('[install-packages] stdout:', stdout);
-      if (stderr && !stderr.includes('npm WARN')) {
-        console.warn('[install-packages] stderr:', stderr);
+      } catch (error: any) {
+        console.error('[install-packages] Installation failed via sandbox client:', error);
+        
+        return NextResponse.json({
+          success: false,
+          packages: validPackages,
+          error: `Failed to install packages: ${error.message}`
+        }, { status: 500 });
       }
-
-      return NextResponse.json({
-        success: true,
-        packages: validPackages,
-        message: `Successfully installed ${validPackages.length} package(s)`,
-        output: stdout || 'Packages installed successfully'
-      });
-
-    } catch (installError: any) {
-      console.error('[install-packages] Installation failed:', installError);
-      
+    } else {
+      // Legacy path - should not be used anymore since we exclusively use containerized sandboxes
+      console.warn('[install-packages] Legacy non-containerized sandbox detected - this should not happen');
       return NextResponse.json({
         success: false,
-        packages: validPackages,
-        error: `Failed to install packages: ${installError.message}`,
-        output: installError.stdout || '',
-        stderr: installError.stderr || ''
-      }, { status: 500 });
+        error: 'Non-containerized sandboxes are no longer supported'
+      }, { status: 400 });
     }
 
   } catch (error) {

@@ -120,6 +120,67 @@ class SandboxServiceClient {
   }
 
   /**
+   * Install packages in a sandbox
+   */
+  async installPackages(sandboxId: string, packages: string[]): Promise<{ success: boolean; message: string; installedPackages?: string[] }> {
+    try {
+      console.log(`[sandbox-client] Installing ${packages.length} packages in sandbox ${sandboxId}`);
+      
+      const response = await fetch(`${this.baseUrl}/api/sandbox/${sandboxId}/install-packages`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          packages
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
+        throw new Error(errorData.error || `Failed to install packages: ${response.status}`);
+      }
+
+      const data = await response.json();
+      console.log(`[sandbox-client] Packages installed in ${sandboxId} successfully`);
+      
+      return data;
+    } catch (error) {
+      console.error(`[sandbox-client] Error installing packages:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Create a zip file of the sandbox
+   */
+  async createZip(sandboxId: string): Promise<{ success: boolean; filename: string; content: string; size: number }> {
+    try {
+      console.log(`[sandbox-client] Creating zip for sandbox ${sandboxId}`);
+      
+      const response = await fetch(`${this.baseUrl}/api/sandbox/${sandboxId}/create-zip`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
+        throw new Error(errorData.error || `Failed to create zip: ${response.status}`);
+      }
+
+      const data = await response.json();
+      console.log(`[sandbox-client] Zip created for ${sandboxId} successfully, size: ${data.size} bytes`);
+      
+      return data;
+    } catch (error) {
+      console.error(`[sandbox-client] Error creating zip:`, error);
+      throw error;
+    }
+  }
+
+  /**
    * Get sandbox URL for serving files
    */
   getSandboxUrl(sandboxId: string): string {

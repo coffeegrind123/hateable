@@ -713,6 +713,60 @@ app.get('/api/sandbox/:sandboxId/files', async (req, res) => {
   }
 });
 
+// Create and download a zip of the sandbox
+app.post('/api/sandbox/:sandboxId/create-zip', async (req, res) => {
+  try {
+    const { sandboxId } = req.params;
+    console.log(`[sandbox-service] Create zip endpoint hit for ${sandboxId}`);
+    
+    const sandbox = activeSandboxes.get(sandboxId);
+    if (!sandbox) {
+      console.log(`[sandbox-service] Sandbox ${sandboxId} not found in registry`);
+      return res.status(404).json({ error: 'Sandbox not found' });
+    }
+    
+    // Update last accessed time
+    sandbox.lastAccessed = new Date();
+    
+    const sandboxPath = `/app/sandboxes/${sandboxId}`;
+    const zipPath = `/tmp/${sandboxId}.zip`;
+    
+    // Use system zip command to create the archive
+    // Exclude node_modules, .git, .next, dist, and other build artifacts
+    const zipCommand = `cd "${sandboxPath}" && zip -r "${zipPath}" . -x "node_modules/*" ".git/*" ".next/*" "dist/*" ".cache/*" "*.log"`;
+    
+    console.log(`[sandbox-service] Creating zip for ${sandboxId}...`);
+    
+    await execAsync(zipCommand, { timeout: 30000 });
+    
+    // Read the zip file
+    const zipBuffer = await fs.readFile(zipPath);
+    
+    // Convert to base64
+    const base64Content = zipBuffer.toString('base64');
+    
+    // Clean up the temporary zip file
+    try {
+      await fs.unlink(zipPath);
+    } catch (cleanupError) {
+      console.warn(`[sandbox-service] Failed to cleanup temp file for ${sandboxId}:`, cleanupError);
+    }
+    
+    console.log(`[sandbox-service] Zip created successfully for ${sandboxId}, size: ${zipBuffer.length} bytes`);
+    
+    res.json({
+      success: true,
+      filename: `${sandboxId}.zip`,
+      content: base64Content,
+      size: zipBuffer.length
+    });
+    
+  } catch (error) {
+    console.error(`[sandbox-service] Error creating zip for ${req.params.sandboxId}:`, error);
+    res.status(500).json({ error: 'Failed to create zip' });
+  }
+});
+
 // Root sandbox access (serves index.html)
 app.get('/api/sandbox/:sandboxId/', async (req, res) => {
   try {
