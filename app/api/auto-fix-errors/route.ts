@@ -253,6 +253,23 @@ export async function POST(request: NextRequest) {
           }
         }
         
+        // Check for Rollup "Could not resolve" errors (common in Vite builds)
+        const rollupImportMatch = errorMessage.match(/Could not resolve "([^"]+)" from "([^"]+)"/);
+        if (rollupImportMatch) {
+          const [, importPath, fromFile] = rollupImportMatch;
+          console.log('[auto-fix-errors] Detected Rollup import error:', { importPath, fromFile });
+          
+          // Determine if this is a local component import or external dependency
+          if (importPath.startsWith('./') || importPath.startsWith('../')) {
+            return await fixMissingComponent(sandboxId, importPath, fromFile);
+          } else {
+            // This is likely an external dependency
+            const packageName = extractPackageName(importPath);
+            console.log('[auto-fix-errors] Detected missing dependency from Rollup:', packageName);
+            return await fixMissingDependency(sandboxId, packageName, fromFile);
+          }
+        }
+        
         // Check for other dependency-related error patterns
         const dependencyErrorPatterns = [
           /Cannot resolve module ['"]([^'"]+)['"]/,
