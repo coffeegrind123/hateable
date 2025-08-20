@@ -1,3 +1,6 @@
 [submodule "firecrawl-simple"]
 	path = firecrawl-simple
 	url = https://github.com/coffeegrind123/firecrawl-simple.git
+[submodule "firesearch"]
+	path = firesearch
+	url = https://github.com/coffeegrind123/firesearch.git
