@@ -11,7 +11,7 @@ export async function POST(req: NextRequest) {
     console.log('[scrape-screenshot-firecrawl] Capturing screenshot with local Firecrawl:', url);
 
     // Get Firecrawl API URL from environment
-    const firecrawlApiUrl = process.env.FIRECRAWL_API_URL || 'http://localhost:3002';
+    const firecrawlApiUrl = process.env.FIRECRAWL_API_URL || 'http://firecrawl-api:3002';
 
     // Use Firecrawl API to capture screenshot
     const firecrawlResponse = await fetch(`${firecrawlApiUrl}/v1/scrape`, {

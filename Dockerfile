@@ -9,14 +9,16 @@ FROM base AS deps
 RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 
-# Install latest pnpm
-RUN corepack install -g pnpm@latest
+# Install specific pnpm version to avoid update warnings
+RUN corepack install -g pnpm@10.15.0
 
 # Copy configuration files
 COPY package.json pnpm-lock.yaml* .npmrc ./
 
-# Install dependencies using pnpm and allow build scripts
-RUN pnpm config set script-approval-required false && \
+# Install dependencies using pnpm and approve specific build scripts
+RUN corepack use pnpm@10.15.0 && \
+    pnpm config set script-approval-required false && \
+    pnpm approve-builds @tailwindcss/oxide sharp unrs-resolver 2>/dev/null || true && \
     if [ -f pnpm-lock.yaml ]; then \
       pnpm install --frozen-lockfile --prod=false; \
     else \
@@ -29,7 +31,8 @@ RUN pnpm add critters@^0.0.24
 # Install firecrawl-simple submodule dependencies
 COPY firecrawl-simple/apps/api/package.json firecrawl-simple/apps/api/pnpm-lock.yaml* ./firecrawl-simple/apps/api/
 WORKDIR /app/firecrawl-simple/apps/api
-RUN pnpm config set script-approval-required false && \
+RUN corepack use pnpm@10.15.0 && \
+    pnpm config set script-approval-required false && \
     if [ -f pnpm-lock.yaml ]; then \
       pnpm install --frozen-lockfile --prod=false; \
     else \
@@ -41,8 +44,8 @@ WORKDIR /app
 FROM base AS builder
 WORKDIR /app
 
-# Enable corepack and install pnpm
-RUN corepack enable && corepack install -g pnpm@latest
+# Enable corepack and install specific pnpm version
+RUN corepack enable && corepack install -g pnpm@10.15.0 && corepack use pnpm@10.15.0
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/firecrawl-simple/apps/api/node_modules ./firecrawl-simple/apps/api/node_modules

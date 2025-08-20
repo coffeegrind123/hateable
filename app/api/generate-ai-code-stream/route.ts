@@ -6,6 +6,7 @@ import { executeSearchPlan, formatSearchResultsForAI, selectTargetFile } from '@
 import { FileManifest } from '@/types/file-manifest';
 import type { ConversationState, ConversationMessage, ConversationEdit } from '@/types/conversation';
 import { appConfig } from '@/config/app.config';
+import { SearchFunctionParser } from '@/lib/search-function-parser';
 
 // Custom OpenAI-compatible client will be created per request
 
@@ -134,6 +135,46 @@ export async function POST(request: NextRequest) {
       try {
         // Send initial status
         await sendProgress({ type: 'status', message: 'Initializing AI...' });
+        
+        // Process search function calls in the prompt
+        const searchParser = new SearchFunctionParser(customEndpoint);
+        let processedPrompt = prompt;
+        let searchResults: any[] = [];
+        
+        if (searchParser.hasSearchCalls(prompt)) {
+          await sendProgress({ type: 'status', message: 'Processing web search requests...' });
+          
+          const searchQueries = searchParser.extractSearchQueries(prompt);
+          console.log('[generate-ai-code-stream] Found search queries:', searchQueries);
+          
+          // Show which searches are being performed
+          for (const query of searchQueries) {
+            await sendProgress({ 
+              type: 'status', 
+              message: `🔍 Searching: "${query}"` 
+            });
+          }
+          
+          try {
+            const processed = await searchParser.processPrompt(prompt);
+            processedPrompt = processed.prompt;
+            searchResults = processed.searchResults;
+            
+            await sendProgress({ 
+              type: 'status', 
+              message: `✅ Search completed. Found ${searchResults.reduce((total, result) => total + result.results.length, 0)} total sources` 
+            });
+            
+            console.log('[generate-ai-code-stream] Search processing completed');
+          } catch (error) {
+            console.error('[generate-ai-code-stream] Search processing failed:', error);
+            await sendProgress({ 
+              type: 'status', 
+              message: '⚠️ Search failed, continuing with original prompt...' 
+            });
+            // Continue with original prompt if search fails
+          }
+        }
         
         // No keep-alive needed - sandbox provisioned for 10 minutes
         
@@ -526,6 +567,16 @@ Remember: You are a SURGEON making a precise incision, not an artist repainting 
             conversationContext += `- Edit style: ${userPrefs.preferredEditStyle}\n`;
           }
           
+          // Include recent screenshots for AI analysis
+          if (global.conversationState.context.screenshots && global.conversationState.context.screenshots.length > 0) {
+            const recentScreenshots = global.conversationState.context.screenshots.slice(-3); // Last 3 screenshots
+            conversationContext += `\n### Recent Screenshots Captured:\n`;
+            recentScreenshots.forEach(screenshot => {
+              conversationContext += `- ${screenshot.url} (${new Date(screenshot.timestamp).toLocaleString()})\n`;
+              conversationContext += `  Screenshot data available for analysis\n`;
+            });
+          }
+
           // Limit total conversation context length
           if (conversationContext.length > 2000) {
             conversationContext = conversationContext.substring(0, 2000) + '\n[Context truncated to prevent length errors]';
@@ -539,7 +590,7 @@ Remember: You are a SURGEON making a precise incision, not an artist repainting 
         const systemPrompt = buildSystemPrompt(conversationContext, isEdit, editContext);
 
         // Build full prompt with context
-        let fullPrompt = prompt;
+        let fullPrompt = processedPrompt;
         if (context) {
           const contextParts = [];
           
@@ -789,7 +840,7 @@ Remember: You are a SURGEON making a precise incision, not an artist repainting 
           }
           
           if (contextParts.length > 0) {
-            fullPrompt = `CONTEXT:\n${contextParts.join('\n')}\n\nUSER REQUEST:\n${prompt}`;
+            fullPrompt = `CONTEXT:\n${contextParts.join('\n')}\n\nUSER REQUEST:\n${processedPrompt}`;
           }
         }
         

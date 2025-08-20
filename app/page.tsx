@@ -187,16 +187,38 @@ function AISandboxPage({ serverSearchParams }: AISandboxPageProps) {
     setResponseArea(prev => [...prev, `[${type}] ${message}`]);
   }, []);
 
+  // Helper function to clean XML tags from content
+  const cleanXMLTags = useCallback((content: string): string => {
+    return content
+      // Remove file tags and their content
+      .replace(/<file path="[^"]*">[\s\S]*?<\/file>/g, '')
+      // Remove other XML tags but keep their content
+      .replace(/<explanation>([\s\S]*?)<\/explanation>/g, '$1')
+      .replace(/<command>([\s\S]*?)<\/command>/g, '')
+      .replace(/<screenshot>([\s\S]*?)<\/screenshot>/g, '')
+      .replace(/<packages>([\s\S]*?)<\/packages>/g, '')
+      // Remove any remaining standalone closing tags
+      .replace(/<\/[^>]*>/g, '')
+      // Remove any remaining opening tags
+      .replace(/<[^>]*>/g, '')
+      // Clean up extra whitespace
+      .replace(/\n\s*\n/g, '\n')
+      .trim();
+  }, []);
+
   const addChatMessage = useCallback((content: string, type: ChatMessage['type'], metadata?: ChatMessage['metadata']) => {
+    // Clean XML tags from content before adding to chat
+    const cleanContent = cleanXMLTags(content);
+    
     setChatMessages(prev => {
       // Skip duplicate consecutive system messages
       if (type === 'system' && prev.length > 0) {
         const lastMessage = prev[prev.length - 1];
-        if (lastMessage.type === 'system' && lastMessage.content === content) {
+        if (lastMessage.type === 'system' && lastMessage.content === cleanContent) {
           return prev; // Skip duplicate
         }
       }
-      return [...prev, { content, type, timestamp: new Date(), metadata }];
+      return [...prev, { content: cleanContent, type, timestamp: new Date(), metadata }];
     });
   }, []);
 
@@ -1654,6 +1676,15 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                               
                               // Remove explanation tags and content
                               remainingContent = remainingContent.replace(/<explanation>[\s\S]*?<\/explanation>/g, '').trim();
+                              
+                              // Remove any other XML tags that might appear
+                              remainingContent = remainingContent
+                                .replace(/<command>[\s\S]*?<\/command>/g, '')
+                                .replace(/<screenshot>[\s\S]*?<\/screenshot>/g, '')
+                                .replace(/<packages>[\s\S]*?<\/packages>/g, '')
+                                .replace(/<\/[^>]*>/g, '')
+                                .replace(/<[^>]*>/g, '')
+                                .trim();
                               
                               // If only whitespace or nothing left, show waiting message
                               return remainingContent || 'Waiting for next file...';
@@ -3643,6 +3674,218 @@ Focus on the key sections and content, making it clean and modern.`;
           </div>
         </div>
       )}
+
+      {/* Endpoint Configuration Modal */}
+      {showEndpointConfig && !showHomeScreen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-gray-800 border border-gray-600 rounded-lg shadow-xl max-w-md w-full p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-white">Configure LLM Endpoint</h3>
+              <button
+                onClick={() => setShowEndpointConfig(false)}
+                className="text-gray-400 hover:text-white transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            
+            <div className="space-y-4">
+              {/* Quick Setup Presets */}
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  Quick Setup
+                </label>
+                <div className="flex flex-wrap gap-2 mb-3">
+                  <button
+                    type="button"
+                    onClick={() => setCustomEndpoint({
+                      url: 'http://localhost:11434/v1',
+                      apiKey: 'ollama',
+                      model: 'llama3.2'
+                    })}
+                    className="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
+                  >
+                    Ollama
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCustomEndpoint({
+                      url: 'http://localhost:8080/v1',
+                      apiKey: '',
+                      model: 'gpt-3.5-turbo'
+                    })}
+                    className="px-2 py-1 text-xs bg-green-100 text-green-700 rounded hover:bg-green-200"
+                  >
+                    LocalAI
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCustomEndpoint({
+                      url: 'http://localhost:1234/v1',
+                      apiKey: '',
+                      model: 'gpt-3.5-turbo'
+                    })}
+                    className="px-2 py-1 text-xs bg-purple-100 text-purple-700 rounded hover:bg-purple-200"
+                  >
+                    LM Studio
+                  </button>
+                </div>
+              </div>
+
+              {/* Manual Configuration */}
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  Endpoint URL
+                </label>
+                <input
+                  type="text"
+                  value={customEndpoint.url}
+                  onChange={(e) => setCustomEndpoint(prev => ({ ...prev, url: e.target.value }))}
+                  className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="http://localhost:11434/v1"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  API Key (optional)
+                </label>
+                <input
+                  type="password"
+                  value={customEndpoint.apiKey}
+                  onChange={(e) => setCustomEndpoint(prev => ({ ...prev, apiKey: e.target.value }))}
+                  className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Leave empty for local endpoints"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  Model Name
+                </label>
+                <div className="space-y-2">
+                  {showCustomModel ? (
+                    <div className="space-y-2">
+                      <input
+                        type="text"
+                        value={customEndpoint.model}
+                        onChange={(e) => setCustomEndpoint(prev => ({ ...prev, model: e.target.value }))}
+                        placeholder="Enter custom model name"
+                        className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowCustomModel(false)}
+                        className="text-xs text-blue-400 hover:text-blue-300"
+                      >
+                        ← Back to available models
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <div className="flex gap-2">
+                        <select
+                          value={customEndpoint.model}
+                          onChange={(e) => {
+                            if (e.target.value === 'custom') {
+                              setShowCustomModel(true);
+                            } else {
+                              setCustomEndpoint(prev => ({ ...prev, model: e.target.value }));
+                            }
+                          }}
+                          className="flex-1 px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          disabled={loadingModels}
+                        >
+                          {availableModels.length > 0 ? (
+                            <>
+                              <optgroup label="Available Models">
+                                {availableModels.map(model => (
+                                  <option key={model} value={model}>{model}</option>
+                                ))}
+                              </optgroup>
+                              <optgroup label="Other">
+                                <option value="custom">🛠️ Custom model name...</option>
+                              </optgroup>
+                            </>
+                          ) : (
+                            <>
+                              <option value={customEndpoint.model}>{customEndpoint.model}</option>
+                              <option value="custom">🛠️ Custom model name...</option>
+                            </>
+                          )}
+                        </select>
+                        <button
+                          type="button"
+                          onClick={fetchAvailableModels}
+                          disabled={!customEndpoint.url || loadingModels}
+                          className="px-3 py-2 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-600 disabled:text-gray-400 disabled:cursor-not-allowed"
+                          title="Fetch available models from endpoint"
+                        >
+                          {loadingModels ? '⏳' : '🔄'}
+                        </button>
+                      </div>
+                      <div className="text-xs text-gray-400">
+                        {availableModels.length > 0 ? (
+                          `Found ${availableModels.length} model(s) from endpoint`
+                        ) : customEndpoint.url ? (
+                          'Click 🔄 to fetch available models'
+                        ) : (
+                          'Enter endpoint URL first, then fetch models'
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setShowCustomModel(true)}
+                        className="text-xs text-blue-400 hover:text-blue-300"
+                      >
+                        Or enter custom model name →
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      const response = await fetch('/api/test-endpoint', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ 
+                          customEndpoint,
+                          testMessage: 'Hello, this is a connection test.'
+                        })
+                      });
+                      
+                      if (response.ok) {
+                        alert('✅ Connection test successful!');
+                      } else {
+                        alert('❌ Connection test failed. Check your settings.');
+                      }
+                    } catch (_error) {
+                      alert('❌ Connection test failed. Check your settings.');
+                    }
+                  }}
+                  className="flex-1 px-3 py-2 text-sm bg-gray-700 text-gray-300 rounded-md hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  🔍 Test Connection
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowEndpointConfig(false)}
+                  className="flex-1 px-3 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  Save & Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       
       <div className="bg-card px-4 py-4 border-b border-border flex items-center justify-between">
         <button 
@@ -3653,10 +3896,14 @@ Focus on the key sections and content, making it clean and modern.`;
           <span className="text-lg font-semibold">Hateable</span>
         </button>
         <div className="flex items-center gap-2">
-          {/* Endpoint Info - Left side */}
-          <div className="text-sm text-gray-400 px-2 py-1 bg-gray-800 rounded border border-gray-600">
+          {/* Endpoint Info - Left side - Now clickable */}
+          <button 
+            onClick={() => setShowEndpointConfig(!showEndpointConfig)}
+            className="text-sm text-gray-400 px-2 py-2 bg-gray-800 rounded border border-gray-600 hover:bg-gray-700 hover:border-gray-500 transition-colors cursor-pointer"
+            title="Click to configure endpoint"
+          >
             {customEndpoint.model} @ {new URL(customEndpoint.url).hostname}
-          </div>
+          </button>
           <Button 
             variant="code"
             onClick={() => createNewSandbox()}
@@ -3689,8 +3936,8 @@ Focus on the key sections and content, making it clean and modern.`;
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
             </svg>
           </Button>
-          <div className="inline-flex items-center gap-2 bg-[#36322F] text-white px-3 py-1.5 rounded-[10px] text-sm font-medium [box-shadow:inset_0px_-2px_0px_0px_#171310,_0px_1px_6px_0px_rgba(58,_33,_8,_58%)]">
-            <span id="status-text" className="leading-none">{status.text}</span>
+          <div className="inline-flex items-center gap-2 bg-[#36322F] text-white px-3 py-2 rounded-[10px] text-sm font-medium [box-shadow:inset_0px_-2px_0px_0px_#171310,_0px_1px_6px_0px_rgba(58,_33,_8,_58%)] h-8">
+            <span id="status-text" className="leading-none whitespace-nowrap">{status.text}</span>
             <div className={`w-2 h-2 rounded-full flex-shrink-0 ${status.active ? 'bg-green-500' : 'bg-gray-800'}`} />
           </div>
         </div>

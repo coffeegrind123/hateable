@@ -12,8 +12,10 @@ services:
       - NEXT_TELEMETRY_DISABLED=1
       - NODE_OPTIONS=--max-old-space-size=4096
       - FIRECRAWL_API_URL=http://firecrawl-api:3002
+      - FIRESEARCH_API_URL=http://firesearch:3005
       - SANDBOX_SERVICE_URL=http://sandbox-service:3004
       - SANDBOX_PUBLIC_URL=http://localhost:3004
+      - INTERNAL_APP_URL=http://app:3000
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/api/test-endpoint"]
@@ -26,6 +28,7 @@ services:
       - ./data:/app/data  # Persistent data storage
     depends_on:
       - firecrawl-api
+      - firesearch
       - sandbox-service
     networks:
       - lovable-network
@@ -45,6 +48,28 @@ services:
       - sandbox-data:/app/sandboxes  # Persistent sandbox storage
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3004/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - lovable-network
+
+  # Firesearch service for intelligent web search
+  firesearch:
+    build:
+      context: ./firesearch
+      dockerfile: Dockerfile
+    ports:
+      - "3005:3000"  # Map external port 3005 to internal port 3000
+    environment:
+      - NODE_ENV=production
+      - FIRECRAWL_API_URL=http://firecrawl-api:3002
+    restart: unless-stopped
+    depends_on:
+      - firecrawl-api
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/check-env"]
       interval: 30s
       timeout: 10s
       retries: 3

@@ -138,7 +138,11 @@ export const appConfig = {
     
     // Request timeout (milliseconds)
     requestTimeout: 30000,
-  }
+  },
+  
+  // External Services Configuration
+  firecrawlApiUrl: process.env.FIRECRAWL_API_URL || 'http://localhost:3002',
+  firesearchApiUrl: process.env.FIRESEARCH_API_URL || 'http://localhost:3005'
 };
 
 // Type-safe config getter

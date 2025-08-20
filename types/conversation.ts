@@ -40,6 +40,12 @@ export interface ConversationContext {
     commonRequests?: string[]; // Common patterns in user requests
     packagePreferences?: string[]; // Commonly used packages
   };
+  screenshots?: Array<{
+    url: string;
+    screenshot: string; // Base64 encoded image data
+    timestamp: number;
+    metadata?: any; // Metadata from Firecrawl
+  }>;
 }
 
 export interface ConversationState {

@@ -12,6 +12,7 @@ interface ParsedResponse {
   files: Array<{ path: string; content: string }>;
   packages: string[];
   commands: string[];
+  screenshots: string[];
   structure: string | null;
 }
 
@@ -20,6 +21,7 @@ function parseAIResponse(response: string): ParsedResponse {
     files: [] as Array<{ path: string; content: string }>,
     commands: [] as string[],
     packages: [] as string[],
+    screenshots: [] as string[],
     structure: null as string | null,
     explanation: '',
     template: ''
@@ -82,6 +84,12 @@ function parseAIResponse(response: string): ParsedResponse {
   const cmdRegex = /<command>(.*?)<\/command>/g;
   while ((match = cmdRegex.exec(response)) !== null) {
     sections.commands.push(match[1].trim());
+  }
+
+  // Parse screenshots
+  const screenshotRegex = /<screenshot>(.*?)<\/screenshot>/g;
+  while ((match = screenshotRegex.exec(response)) !== null) {
+    sections.screenshots.push(match[1].trim());
   }
 
   // Parse packages - support both <package> and <packages> tags
@@ -158,6 +166,7 @@ export async function POST(request: NextRequest) {
           filesCreated: parsed.files.map(f => f.path),
           packagesInstalled: parsed.packages,
           commandsExecuted: parsed.commands,
+          screenshotsCaptured: parsed.screenshots,
           errors: []
         },
         explanation: parsed.explanation,
@@ -180,6 +189,7 @@ export async function POST(request: NextRequest) {
       packagesAlreadyInstalled: [] as string[],
       packagesFailed: [] as string[],
       commandsExecuted: [] as string[],
+      screenshotsCaptured: [] as string[],
       errors: [] as string[]
     };
     
@@ -512,6 +522,47 @@ if result.stderr:
         results.commandsExecuted.push(cmd);
       } catch (error) {
         results.errors.push(`Failed to execute ${cmd}: ${(error as Error).message}`);
+      }
+    }
+
+    // Execute screenshot requests
+    for (const url of parsed.screenshots) {
+      try {
+        console.log(`[apply-ai-code] Capturing screenshot of: ${url}`);
+        
+        const screenshotResponse = await fetch(`${process.env.INTERNAL_APP_URL || 'http://app:3000'}/api/scrape-screenshot-firecrawl`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url })
+        });
+        
+        if (screenshotResponse.ok) {
+          const screenshotData = await screenshotResponse.json();
+          if (screenshotData.success && screenshotData.screenshot) {
+            console.log(`[apply-ai-code] Screenshot captured successfully for: ${url}`);
+            results.screenshotsCaptured.push(url);
+            
+            // Store screenshot in conversation context for the next AI interaction
+            if (global.conversationState) {
+              if (!global.conversationState.context.screenshots) {
+                global.conversationState.context.screenshots = [];
+              }
+              global.conversationState.context.screenshots.push({
+                url,
+                screenshot: screenshotData.screenshot,
+                timestamp: Date.now(),
+                metadata: screenshotData.metadata
+              });
+            }
+          } else {
+            results.errors.push(`Screenshot failed for ${url}: ${screenshotData.error || 'Unknown error'}`);
+          }
+        } else {
+          results.errors.push(`Screenshot API call failed for ${url}: ${screenshotResponse.status}`);
+        }
+      } catch (error) {
+        console.error(`[apply-ai-code] Error capturing screenshot for ${url}:`, error);
+        results.errors.push(`Failed to capture screenshot for ${url}: ${(error as Error).message}`);
       }
     }
     

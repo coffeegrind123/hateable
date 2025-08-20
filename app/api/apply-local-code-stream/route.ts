@@ -1,16 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sandboxClient, type SandboxFile } from '@/lib/sandbox-client';
+import type { ConversationState } from '@/types/conversation';
+
+declare global {
+  var conversationState: ConversationState | null;
+}
 
 interface ParsedResponse {
   explanation: string;
   files: Array<{ path: string; content: string }>;
   packages: string[];
+  screenshots: string[];
 }
 
 function parseAIResponse(response: string): ParsedResponse {
   const sections = {
     files: [] as Array<{ path: string; content: string }>,
     packages: [] as string[],
+    screenshots: [] as string[],
     explanation: ''
   };
   
@@ -26,6 +33,13 @@ function parseAIResponse(response: string): ParsedResponse {
     // Extract packages from imports in this file
     const packages = extractPackagesFromCode(content);
     sections.packages.push(...packages);
+  }
+  
+  // Parse screenshots
+  const screenshotRegex = /<screenshot>(.*?)<\/screenshot>/g;
+  let screenshotMatch;
+  while ((screenshotMatch = screenshotRegex.exec(response)) !== null) {
+    sections.screenshots.push(screenshotMatch[1].trim());
   }
   
   // Extract explanation
@@ -210,6 +224,78 @@ export async function POST(request: NextRequest) {
           global.sandboxState.fileCache.lastSync = Date.now();
         }
         
+        // Execute screenshot requests
+        for (const url of parsed.screenshots) {
+          try {
+            await sendProgress({
+              type: 'status',
+              message: `Capturing screenshot of ${url}...`
+            });
+            
+            console.log(`[apply-local-code-stream] Capturing screenshot of: ${url}`);
+            
+            const screenshotResponse = await fetch(`${process.env.INTERNAL_APP_URL || 'http://app:3000'}/api/scrape-screenshot-firecrawl`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ url })
+            });
+            
+            if (screenshotResponse.ok) {
+              const screenshotData = await screenshotResponse.json();
+              if (screenshotData.success && screenshotData.screenshot) {
+                console.log(`[apply-local-code-stream] Screenshot captured successfully for: ${url}`);
+                
+                await sendProgress({
+                  type: 'screenshot_captured',
+                  url: url,
+                  message: `Screenshot captured for ${url}`
+                });
+                
+                // Store screenshot in conversation context for the next AI interaction
+                if (!global.conversationState) {
+                  global.conversationState = {
+                    conversationId: `conv-${Date.now()}`,
+                    startedAt: Date.now(),
+                    lastUpdated: Date.now(),
+                    context: {
+                      messages: [],
+                      edits: [],
+                      projectEvolution: { majorChanges: [] },
+                      userPreferences: {}
+                    }
+                  };
+                }
+                
+                if (!global.conversationState.context.screenshots) {
+                  global.conversationState.context.screenshots = [];
+                }
+                global.conversationState.context.screenshots.push({
+                  url,
+                  screenshot: screenshotData.screenshot,
+                  timestamp: Date.now(),
+                  metadata: screenshotData.metadata
+                });
+              } else {
+                await sendProgress({
+                  type: 'error',
+                  message: `Screenshot failed for ${url}: ${screenshotData.error || 'Unknown error'}`
+                });
+              }
+            } else {
+              await sendProgress({
+                type: 'error',
+                message: `Screenshot API call failed for ${url}: ${screenshotResponse.status}`
+              });
+            }
+          } catch (error) {
+            console.error(`[apply-local-code-stream] Error capturing screenshot for ${url}:`, error);
+            await sendProgress({
+              type: 'error',
+              message: `Failed to capture screenshot for ${url}: ${(error as Error).message}`
+            });
+          }
+        }
+
         // Enhanced package installation with streaming progress
         const allPackages = [...new Set([...parsed.packages, ...additionalPackages])].filter(Boolean);
         
@@ -298,8 +384,9 @@ export async function POST(request: NextRequest) {
           type: 'complete',
           files: parsed.files.map(f => f.path),
           packages: allPackages,
+          screenshots: parsed.screenshots,
           explanation: parsed.explanation,
-          message: 'Code applied successfully with auto-fix monitoring enabled'
+          message: `Code applied successfully${parsed.screenshots.length > 0 ? ` with ${parsed.screenshots.length} screenshot(s) captured` : ''} with auto-fix monitoring enabled`
         });
         
       } catch (error) {

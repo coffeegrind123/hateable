@@ -60,10 +60,21 @@ ${fileContent}
 
 INSTRUCTIONS:
 1. Analyze the error and fix it
-2. If it's a missing import/component, create the missing file
+2. If it's a missing import/component, create the missing file with proper styling
 3. If it's a syntax error, fix the syntax
 4. Return the corrected code or create missing files
 5. Ensure all imports are satisfied
+
+COMPONENT STYLING RULES (if creating new components):
+- Use modern, clean design with subtle gradients and professional styling
+- Use colors like blue-50, indigo-100, gray-200 for backgrounds
+- Use indigo-600, gray-800 for text colors
+- Include meaningful icons using heroicons or similar SVG paths
+- Use proper Tailwind classes: flex, items-center, justify-center, rounded-lg, etc.
+- Make components look professional and integrated with the rest of the app
+- DO NOT mention "auto-generated" or "automatically generated" anywhere
+- Use descriptive placeholder text like "Ready to customize this component"
+- Create components that look like they belong in the application
 
 Return your response in this format:
 <fix>
@@ -505,16 +516,16 @@ function generateComponentCode(componentName: string): string {
 
 const ${componentName} = () => {
   return (
-    <div className="p-6 bg-white border-4 border-black shadow-[8px_8px_0px_0px_#000]">
-      <h2 className="text-2xl font-bold mb-4 border-b-4 border-black pb-2">${componentName}</h2>
-      <p className="text-gray-700">
-        This component was automatically generated to fix a missing import error.
-        Please customize it according to your needs.
-      </p>
-      <div className="mt-4 p-3 bg-yellow-300 border-2 border-black">
-        <p className="text-sm font-bold">Auto-generated component</p>
-        <p className="text-xs">Replace this content with your implementation</p>
+    <div className="flex flex-col items-center justify-center p-8 bg-gradient-to-br from-blue-50 to-indigo-100 rounded-lg border border-gray-200 shadow-sm">
+      <div className="w-16 h-16 bg-indigo-100 rounded-full flex items-center justify-center mb-4">
+        <svg className="w-8 h-8 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+        </svg>
       </div>
+      <h2 className="text-xl font-semibold text-gray-800 mb-2">${componentName}</h2>
+      <p className="text-gray-600 text-center text-sm max-w-md">
+        Ready to customize this component with your content and functionality.
+      </p>
     </div>
   );
 };
