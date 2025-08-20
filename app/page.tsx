@@ -76,9 +76,28 @@ function AISandboxPage({ serverSearchParams }: AISandboxPageProps) {
   );
   const router = useRouter();
   const [customEndpoint, setCustomEndpoint] = useState(() => {
-    const savedEndpoint = localStorage.getItem('customEndpoint');
-    return savedEndpoint ? JSON.parse(savedEndpoint) : appConfig.ai.defaultEndpoint;
+    // Check if we're on the client side to avoid SSR hydration issues
+    if (typeof window !== 'undefined') {
+      const savedEndpoint = localStorage.getItem('customEndpoint');
+      return savedEndpoint ? JSON.parse(savedEndpoint) : appConfig.ai.defaultEndpoint;
+    }
+    return appConfig.ai.defaultEndpoint;
   });
+  
+  // Load saved endpoint from localStorage after hydration
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const savedEndpoint = localStorage.getItem('customEndpoint');
+      if (savedEndpoint) {
+        try {
+          setCustomEndpoint(JSON.parse(savedEndpoint));
+        } catch (error) {
+          console.warn('Failed to parse saved endpoint, using default');
+        }
+      }
+    }
+  }, []);
+  
   const [showEndpointConfig, setShowEndpointConfig] = useState(false);
   const [showCustomModel, setShowCustomModel] = useState(false);
   const [availableModels, setAvailableModels] = useState<string[]>([]);
