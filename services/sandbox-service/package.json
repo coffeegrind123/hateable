@@ -4,6 +4,7 @@
   "description": "Containerized sandbox management service for Open Lovable",
   "main": "src/server.js",
   "type": "module",
+  "packageManager": "pnpm@10.15.0",
   "scripts": {
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
@@ -12,7 +13,7 @@
   "dependencies": {
     "express": "^4.18.2",
     "cors": "^2.8.5",
-    "multer": "^1.4.5-lts.1",
+    "multer": "^2.0.1",
     "archiver": "^5.3.1",
     "yauzl": "^3.0.0"
   },

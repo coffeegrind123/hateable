@@ -8,9 +8,10 @@ RUN apt-get update && apt-get install -y \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-# Enable corepack and install the absolute latest pnpm
+# Enable corepack and install the latest pnpm
 RUN corepack enable
-RUN corepack install -g pnpm@10.14.0
+RUN corepack install -g pnpm@10.15.0
+RUN corepack use pnpm@10.15.0
 RUN pnpm --version
 
 # Create app directory
