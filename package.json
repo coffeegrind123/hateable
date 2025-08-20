@@ -63,7 +63,7 @@
     "tailwindcss": "^4.1.11",
     "typescript": "^5",
     "@next/bundle-analyzer": "^15.1.0",
-    "critters": "^0.0.24",
+    "beasties": "^0.0.8",
     "cross-env": "^7.0.3",
     "only-allow": "^1.2.1"
   },

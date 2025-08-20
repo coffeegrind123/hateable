@@ -25,8 +25,8 @@ RUN corepack use pnpm@10.15.0 && \
       pnpm install; \
     fi
 
-# Ensure critters is available for production builds
-RUN pnpm add critters@^0.0.24
+# Ensure beasties is available for production builds (replaces deprecated critters)
+RUN pnpm add beasties@^0.0.8
 
 # Install firecrawl-simple submodule dependencies
 COPY firecrawl-simple/apps/api/package.json firecrawl-simple/apps/api/pnpm-lock.yaml* ./firecrawl-simple/apps/api/
@@ -37,7 +37,8 @@ RUN corepack use pnpm@10.15.0 && \
       pnpm install --frozen-lockfile --prod=false; \
     else \
       pnpm install; \
-    fi
+    fi && \
+    pnpm approve-builds
 WORKDIR /app
 
 # Rebuild the source code only when needed
