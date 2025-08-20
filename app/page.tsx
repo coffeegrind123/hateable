@@ -494,8 +494,23 @@ Tip: I automatically detect and install npm packages from your code imports (lik
   useEffect(() => {
     const sandboxIdParam = searchParams.get('sandbox');
     
-    // Only restore if we have a different sandbox ID and we're not currently restoring
-    if (hasInitializedRef.current && sandboxIdParam && sandboxData?.sandboxId !== sandboxIdParam && !restoringRef.current && !isCreatingSandboxRef.current) {
+    console.log('[home] URL effect triggered:', {
+      hasInitialized: hasInitializedRef.current,
+      sandboxIdParam,
+      currentSandboxId: sandboxData?.sandboxId,
+      isRestoring: restoringRef.current,
+      isCreating: isCreatingSandboxRef.current
+    });
+    
+    // Restore sandbox if:
+    // 1. Page has initialized
+    // 2. We have a sandbox ID in URL
+    // 3. Current sandbox is different OR we don't have a current sandbox
+    // 4. We're not already in the middle of an operation
+    if (hasInitializedRef.current && sandboxIdParam && 
+        (sandboxData?.sandboxId !== sandboxIdParam || !sandboxData) && 
+        !restoringRef.current && !isCreatingSandboxRef.current) {
+      
       // Validate sandbox ID format before attempting restoration
       if (sandboxIdParam.match(/^sandbox_\d+_[a-z0-9]+$/)) {
         console.log('[home] URL parameter changed, restoring valid sandbox:', sandboxIdParam);
@@ -520,7 +535,16 @@ Tip: I automatically detect and install npm packages from your code imports (lik
         router.replace(`/?${newParams.toString()}`, { scroll: false });
       }
     }
-  }, [searchParams]);
+    
+    // Handle case where URL has no sandbox parameter but we have a current sandbox (user went to home page)
+    if (hasInitializedRef.current && !sandboxIdParam && sandboxData) {
+      console.log('[home] No sandbox in URL but have current sandbox, clearing sandbox state');
+      setSandboxData(null);
+      setLoading(false);
+      setShowLoadingBackground(false);
+      updateStatus('Ready', true);
+    }
+  }, [searchParams, sandboxData]);
 
   // Save custom endpoint configuration to localStorage
   useEffect(() => {
